@@ -42,10 +42,10 @@ namespace BAMPServerBrowser
         // ---------- UI ----------
         private float _scale = 1f;
         private Rect _listRect = new Rect(20, 90, 700, 840);
-        private Rect _hostRect = new Rect(20, 230, 480, 510);
+        private Rect _hostRect = new Rect(20, 230, 480, 540);
         private bool _hostRectPlaced;
         private bool _styles;
-        private GUIStyle _win, _row, _rowSel, _small, _title, _bad, _good, _box;
+        private GUIStyle _win, _row, _rowSel, _small, _title, _bad, _good, _box, _radio;
         private Texture2D _dotOn, _dotOff;
 
         private EventSystem _blockedEs;
@@ -74,6 +74,7 @@ namespace BAMPServerBrowser
             catch { }
             _editName = Cfg.serverName;
             _editApw = Cfg.adminPassword;
+            SaveServerPrompt.OnAsk = ui => OpenSaveServerDialog(ui);
             AdminChannel.SettingsChanged = () =>
             {
                 _editName = Cfg.serverName; _editDesc = Cfg.description; _editPw = Cfg.joinPassword; _editApw = Cfg.adminPassword;
@@ -378,6 +379,8 @@ namespace BAMPServerBrowser
             _bad = new GUIStyle(_small); _bad.normal.textColor = new Color(1f, 0.5f, 0.45f);
             _good = new GUIStyle(_small); _good.normal.textColor = new Color(0.5f, 0.9f, 0.55f);
             _title.richText = true;
+            _radio = new GUIStyle(GUI.skin.toggle) { richText = true, fontSize = 13 };
+            _radio.normal.textColor = _radio.onNormal.textColor = _radio.hover.textColor = _radio.onHover.textColor = Color.white;
             _row.padding = new RectOffset(28, 8, 4, 4);
             _rowSel.padding = new RectOffset(28, 8, 4, 4);
             _box = new GUIStyle(GUI.skin.box) { padding = new RectOffset(10, 10, 8, 8), margin = new RectOffset(0, 0, 6, 0) };
@@ -413,7 +416,7 @@ namespace BAMPServerBrowser
 
         private void OnGUI()
         {
-            if (!_show && !ShowHostPanel && !_showAdmin && _toasts.Count == 0) return;
+            if (!_show && !ShowHostPanel && !_showAdmin && _toasts.Count == 0 && !_showSaveDlg) return;
             InitStyles();
             _scale = Mathf.Max(0.5f, Screen.height / 1080f);
             GUI.matrix = Matrix4x4.TRS(Vector3.zero, Quaternion.identity, new Vector3(_scale, _scale, 1f));
@@ -429,6 +432,12 @@ namespace BAMPServerBrowser
             if (_show) _listRect = Clamp(GUI.Window(0x42A1, _listRect, DrawList, "Open multiplayer games", _win), vw, vh);
             if (ShowHostPanel) _hostRect = Clamp(GUI.Window(0x42A2, _hostRect, DrawHost, "Publish my game", _win), vw, vh);
             if (_showAdmin) _adminRect = Clamp(GUI.Window(0x42A3, _adminRect, DrawAdmin, AdminChannel.LocalMode ? "Players & tools (host)" : "Manage this game (admin)", _win), vw, vh);
+            if (_showSaveDlg)
+            {
+                if (!_saveDlgPlaced) { _saveDlgPlaced = true; _saveDlgRect.x = (vw - _saveDlgRect.width) / 2; _saveDlgRect.y = (vh - _saveDlgRect.height) / 2; }
+                _saveDlgRect = Clamp(GUI.Window(0x42A5, _saveDlgRect, DrawSaveDlg, "Where should your shared saves be stored?", _win), vw, vh);
+                GUI.FocusWindow(0x42A5);
+            }
             if (_toasts.Count > 0) DrawToasts(vw);
 
             if (Event.current.type == EventType.MouseUp &&
@@ -1075,6 +1084,143 @@ namespace BAMPServerBrowser
             GUI.DragWindow(new Rect(0, 0, 10000, 28));
         }
 
+        // =====================================================================
+        //  Question "où ranger les sauvegardes partagées" (Host New Game, ou bouton Change)
+        // =====================================================================
+        private bool _showSaveDlg, _saveDlgPlaced;
+        private MPCanvasUI _saveDlgUi;            // non nul : lancer "Host New Game" après le choix
+        private Rect _saveDlgRect = new Rect(0, 0, 600, 470);
+        private int _ssMode;                      // 0 = ce PC, 1 = mon serveur, 2 = garder le groupe d'un ami
+        private string _ssUrl = "", _ssPort = "", _ssTest = "";
+        private bool _ssTestOk, _ssTesting, _ssDontAsk;
+
+        private void OpenSaveServerDialog(MPCanvasUI hostNewUi)
+        {
+            _saveDlgUi = hostNewUi;
+            string cur = (Cfg.worldsUrl ?? "").Trim();
+            _ssMode = cur.Length > 0 ? 1 : Cfg.CodeHost.Length > 0 ? 2 : 0;
+            // pré-remplissage : serveur actuel, sinon le dernier serveur utilisé
+            _ssUrl = cur.Length > 0 ? cur : (Cfg.saveServerHistory.FirstOrDefault() ?? "");
+            _ssPort = Cfg.localStoragePort.ToString();
+            _ssTest = ""; _ssTestOk = false; _ssTesting = false;
+            _ssDontAsk = !Cfg.askSaveServerOnNewGame;
+            _saveDlgPlaced = false;
+            _showSaveDlg = true;
+        }
+
+        private string SaveServerSummary()
+        {
+            if ((Cfg.worldsUrl ?? "").Trim().Length > 0) return "your server " + Cfg.worldsUrl.Trim();
+            if (Cfg.CodeHost.Length > 0) return "the group of " + Cfg.CodeHost + " (code from a friend)";
+            return "this PC (port " + Cfg.localStoragePort + ")";
+        }
+
+        private void TestSaveServer()
+        {
+            _ssTesting = true; _ssTest = "Testing..."; _ssTestOk = false;
+            string u = _ssUrl;
+            SaveServerPrompt.TestAsync(u).ContinueWith(t => _main.Enqueue(() =>
+            {
+                _ssTesting = false;
+                if (u != _ssUrl) return; // adresse modifiée entre-temps
+                var (ok, msg) = t.IsFaulted ? (false, "Test failed.") : t.Result;
+                _ssTestOk = ok; _ssTest = msg;
+            }));
+        }
+
+        private void ApplySaveServer()
+        {
+            if (_ssMode == 0)
+            {
+                if (!int.TryParse((_ssPort ?? "").Trim(), out int port) || port < 1024 || port > 65535) { _ssTest = "The port must be a number between 1024 and 65535."; _ssTestOk = false; return; }
+                if (Cfg.CodeHost.Length > 0) Cfg.shareKey = BrowserConfig.NewGroupKey(); // notre propre groupe, rangé sur ce PC
+                Cfg.worldsUrl = "";
+                Cfg.localStoragePort = port;
+            }
+            else if (_ssMode == 1)
+            {
+                string raw = (_ssUrl ?? "").Trim().TrimEnd('/');
+                if (BrowserConfig.NormalizeUrl(raw).Length == 0) { _ssTest = "Invalid address. Example: 203.0.113.5:8787"; _ssTestOk = false; return; }
+                if (Cfg.CodeHost.Length > 0) Cfg.shareKey = BrowserConfig.NewGroupKey();
+                Cfg.worldsUrl = raw;
+                Cfg.saveServerHistory.RemoveAll(x => string.Equals(x, raw, StringComparison.OrdinalIgnoreCase));
+                Cfg.saveServerHistory.Insert(0, raw);
+                while (Cfg.saveServerHistory.Count > 5) Cfg.saveServerHistory.RemoveAt(Cfg.saveServerHistory.Count - 1);
+            }
+            Cfg.askSaveServerOnNewGame = !_ssDontAsk;
+            BrowserConfig.Save();
+            _sync.SyncNow();
+            ModEntry.Info("[SaveServer] shared saves stored on " + SaveServerSummary() + ".");
+            _showSaveDlg = false;
+            _focus = 0;
+            var ui = _saveDlgUi;
+            _saveDlgUi = null;
+            if (ui != null) SaveServerPrompt.ContinueHostNew(ui);
+        }
+
+        private void DrawSaveDlg(int id)
+        {
+            GUILayout.Label("Your friends who join with your player password receive the shared save of your world, and an admin can relaunch it when you are offline. This choice applies to all the games you host.", _small);
+            GUILayout.Space(6);
+
+            // ---- ce PC
+            if (GUILayout.Toggle(_ssMode == 0, " <b>This PC</b> (default)", _radio) && _ssMode != 0) { _ssMode = 0; _ssTest = ""; }
+            if (_ssMode == 0)
+            {
+                GUILayout.BeginHorizontal();
+                GUILayout.Space(24);
+                GUILayout.Label("Port:", _small, GUILayout.Width(50));
+                _ssPort = Field(13, _ssPort, 5);
+                GUILayout.FlexibleSpace();
+                GUILayout.EndHorizontal();
+                GUILayout.Label("<size=11>      Saves stay on this PC. Friends need this TCP port open on your router to get them. When your PC is off, they keep their last copy.</size>", _small);
+            }
+
+            // ---- mon serveur
+            if (GUILayout.Toggle(_ssMode == 1, " <b>My own server</b> (always on, e.g. a VPS)", _radio) && _ssMode != 1) { _ssMode = 1; _ssTest = ""; }
+            if (_ssMode == 1)
+            {
+                GUILayout.BeginHorizontal();
+                GUILayout.Space(24);
+                GUILayout.Label("Address:", _small, GUILayout.Width(70));
+                string before = _ssUrl;
+                _ssUrl = Field(14, _ssUrl, 120);
+                if (_ssUrl != before) { _ssTest = ""; _ssTestOk = false; }
+                GUI.enabled = !_ssTesting && (_ssUrl ?? "").Trim().Length > 0;
+                if (GUILayout.Button(_ssTesting ? "..." : "Test", GUILayout.Width(70))) TestSaveServer();
+                GUI.enabled = true;
+                GUILayout.EndHorizontal();
+                var others = Cfg.saveServerHistory.Where(x => !string.Equals(x, (_ssUrl ?? "").Trim(), StringComparison.OrdinalIgnoreCase)).Take(4).ToList();
+                if (others.Count > 0)
+                {
+                    GUILayout.Label("<size=11>      Servers you used before:</size>", _small);
+                    foreach (var h in others)
+                    {
+                        GUILayout.BeginHorizontal();
+                        GUILayout.Space(24);
+                        if (GUILayout.Button(Esc(h), GUILayout.Width(360))) { _ssUrl = h; _ssTest = ""; _ssTestOk = false; }
+                        GUILayout.EndHorizontal();
+                    }
+                }
+                GUILayout.Label("<size=11>      The server runs master.py with save storage on (install.sh, BAMP_WORLDS=1). A server that only lists games can't store saves.</size>", _small);
+            }
+
+            // ---- groupe d'un ami (ancienne configuration)
+            if (Cfg.CodeHost.Length > 0)
+            {
+                if (GUILayout.Toggle(_ssMode == 2, " Keep using the group of " + Esc(Cfg.CodeHost) + " (code from a friend)", _radio) && _ssMode != 2) { _ssMode = 2; _ssTest = ""; }
+            }
+
+            if (_ssTest.Length > 0) GUILayout.Label(_ssTest, _ssTestOk ? _good : _bad);
+            GUILayout.FlexibleSpace();
+            _ssDontAsk = GUILayout.Toggle(_ssDontAsk, " Don't ask again when I host a new game (change it in \"Publish my game\")");
+            GUILayout.BeginHorizontal();
+            if (GUILayout.Button(_saveDlgUi != null ? "Continue and host" : "Save", GUILayout.Height(34))) ApplySaveServer();
+            if (GUILayout.Button("Cancel", GUILayout.Height(34), GUILayout.Width(120))) { _showSaveDlg = false; _saveDlgUi = null; _focus = 0; }
+            GUILayout.EndHorizontal();
+            GUI.DragWindow(new Rect(0, 0, 10000, 28));
+        }
+
         private void DrawHost(int id)
         {
             bool pub = GUILayout.Toggle(Cfg.publish, " Show my game in the public list");
@@ -1133,6 +1279,10 @@ namespace BAMPServerBrowser
             GUI.enabled = true;
             GUILayout.EndHorizontal();
 
+            GUILayout.BeginHorizontal();
+            GUILayout.Label("<size=11>Shared saves stored on " + Esc(SaveServerSummary()) + "</size>", _small);
+            if (GUILayout.Button("Change", GUILayout.Width(80))) OpenSaveServerDialog(null);
+            GUILayout.EndHorizontal();
             if (GUILayout.Button("Players & tools (kick, ban, message, save, trash)", GUILayout.Height(28)))
             {
                 AdminChannel.EnterLocalMode();
@@ -1179,14 +1329,14 @@ namespace BAMPServerBrowser
         {
             if (_focus == 0) return;
             bool visible = ((_focus == 1 || _focus == 6) && _show) || ((_focus == 2 || _focus == 3 || _focus == 5 || _focus == 7) && ShowHostPanel)
-                           || (_focus >= 8 && _focus <= 12 && _showAdmin);
+                           || (_focus >= 8 && _focus <= 12 && _showAdmin) || ((_focus == 13 || _focus == 14) && _showSaveDlg);
             if (!visible) { _focus = 0; return; }
             if (Input.GetMouseButtonDown(0))
             {
                 // un clic hors du champ retire le focus (le clic sur un autre champ le redonne dans OnGUI)
                 var m = Input.mousePosition;
                 var p = new Vector2(m.x / _scale, (Screen.height - m.y) / _scale);
-                if (!((_show && _listRect.Contains(p)) || (ShowHostPanel && _hostRect.Contains(p)) || (_showAdmin && _adminRect.Contains(p)))) { _focus = 0; return; }
+                if (!((_show && _listRect.Contains(p)) || (ShowHostPanel && _hostRect.Contains(p)) || (_showAdmin && _adminRect.Contains(p)) || (_showSaveDlg && _saveDlgRect.Contains(p)))) { _focus = 0; return; }
             }
             if (Input.GetKeyDown(KeyCode.Escape)) { _focus = 0; return; }
             string buf = _focusBuf;
@@ -1210,11 +1360,11 @@ namespace BAMPServerBrowser
         private void UpdateClickBlock()
         {
             bool over = false;
-            if (_show || ShowHostPanel || _showAdmin || _toasts.Count > 0)
+            if (_show || ShowHostPanel || _showAdmin || _toasts.Count > 0 || _showSaveDlg)
             {
                 var m = Input.mousePosition;
                 var p = new Vector2(m.x / _scale, (Screen.height - m.y) / _scale);
-                over = (_show && _listRect.Contains(p)) || (ShowHostPanel && _hostRect.Contains(p)) || (_showAdmin && _adminRect.Contains(p));
+                over = (_show && _listRect.Contains(p)) || (ShowHostPanel && _hostRect.Contains(p)) || (_showAdmin && _adminRect.Contains(p)) || (_showSaveDlg && _saveDlgRect.Contains(p));
                 float vwc = Screen.width / _scale;
                 for (int i = 0; i < _toasts.Count && !over; i++) over = ToastRect(i, vwc).Contains(p);
             }

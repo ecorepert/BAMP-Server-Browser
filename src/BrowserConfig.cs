@@ -62,6 +62,10 @@ namespace BAMPServerBrowser
         public bool listHidePassword;
         /// <summary>N'afficher que les favoris.</summary>
         public bool listFavoritesOnly;
+        /// <summary>Demander où ranger les sauvegardes partagées à chaque "Host New Game".</summary>
+        public bool askSaveServerOnNewGame = true;
+        /// <summary>Serveurs de sauvegarde déjà utilisés (le plus récent d'abord), pour pré-remplir la question.</summary>
+        public System.Collections.Generic.List<string> saveServerHistory = new System.Collections.Generic.List<string>();
         /// <summary>Vérifier sur GitHub si une nouvelle version du mod existe.</summary>
         public bool checkUpdates = true;
         /// <summary>Langue parlée sur la partie hébergée (code court, ex. "FR"). Vide = déduite de la langue du système.</summary>
@@ -145,9 +149,7 @@ namespace BAMPServerBrowser
                 if (IsLocalStorageOwner) return "http://127.0.0.1:" + localStoragePort;
                 string u = (worldsUrl ?? "").Trim();
                 if (u.Length == 0) u = CodeHost;
-                if (u.Length == 0) return "";
-                if (!u.StartsWith("http://", StringComparison.OrdinalIgnoreCase) && !u.StartsWith("https://", StringComparison.OrdinalIgnoreCase)) u = "http://" + u;
-                return u.TrimEnd('/');
+                return NormalizeUrl(u);
             }
         }
 
@@ -163,6 +165,20 @@ namespace BAMPServerBrowser
             string host = w.StartsWith("http://", StringComparison.OrdinalIgnoreCase) ? w.Substring(7) : w;
             return key + "@" + host;
         }
+
+        /// <summary>"1.2.3.4:8787" ou "http(s)://hote:port/" -> "http(s)://hote:port" ; "" si vide ou invalide.</summary>
+        public static string NormalizeUrl(string u)
+        {
+            u = (u ?? "").Trim();
+            if (u.Length == 0) return "";
+            if (!u.StartsWith("http://", StringComparison.OrdinalIgnoreCase) && !u.StartsWith("https://", StringComparison.OrdinalIgnoreCase)) u = "http://" + u;
+            u = u.TrimEnd('/');
+            if (!Uri.TryCreate(u, UriKind.Absolute, out var uri) || uri.AbsolutePath.Trim('/').Length > 0 || uri.Query.Length > 0 || u.Contains(" ")) return "";
+            return u;
+        }
+
+        /// <summary>Nouveau code de groupe (pour repartir avec son propre groupe).</summary>
+        public static string NewGroupKey() => "groupe-" + RandomHex(8);
 
         private static string RandomHex(int bytes)
         {
@@ -194,6 +210,10 @@ namespace BAMPServerBrowser
                 Current.listLanguage = (Current.listLanguage ?? "").Trim().ToUpperInvariant();
                 if (Current.joinedWorlds == null) Current.joinedWorlds = new System.Collections.Generic.Dictionary<string, string>();
                 if (Current.favorites == null) Current.favorites = new System.Collections.Generic.List<string>();
+                if (Current.saveServerHistory == null) Current.saveServerHistory = new System.Collections.Generic.List<string>();
+                // l'ancien serveur configuré à la main fait partie de l'historique
+                string ws = (Current.worldsUrl ?? "").Trim();
+                if (ws.Length > 0 && !Current.saveServerHistory.Contains(ws)) Current.saveServerHistory.Insert(0, ws);
                 if (Current.localStoragePort < 1024 || Current.localStoragePort > 65535) Current.localStoragePort = 8788;
                 Save();
             }

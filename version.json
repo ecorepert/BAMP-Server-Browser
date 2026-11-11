@@ -1,4 +1,4 @@
 {
-  "version": "1.3.0",
-  "notes": "Favorites, ping, difficulty settings, admin tools (kick, ban, message, save, trash), encrypted passwords."
+  "version": "1.3.1",
+  "notes": "Hosting a new game now asks where to store the shared saves (this PC or your own server)."
 }

@@ -69,7 +69,10 @@ To uninstall, delete the `ModsLocal\BAMPServerBrowser` folder.
 - **Relaunch an offline game (admin only)**: an admin who joined the game once with the admin password
   can restart it when it is offline: select it in the list → *Relaunch as admin* → admin password. Their PC
   hosts its copy of the world (from the shared saves) with the same name, description, language and passwords.
-- **Host**: *Host New Game* or *Host Saved Game*. The **Publish my game** panel appears in the lobby.
+- **Host**: *Host New Game* or *Host Saved Game*. *Host New Game* first asks **where to store the shared
+  saves**: *This PC* (default, with its port) or *My own server* (address pre-filled from your config and the
+  servers you used before, with a *Test* button). The **Publish my game** panel appears in the lobby; its
+  *Change* button opens the same choice later. The headless server is never asked.
 - **F9**: show/hide the list at any time (joining needs the main menu).
 - Panels can be dragged by their title bar.
 
@@ -150,6 +153,8 @@ If your hosting provider has its own firewall, open the port there as well. Chec
 | `notifyFavorites` | `true` | Notification when a favorite comes online |
 | `listHidePassword` | `false` | Hide games with a password in the list |
 | `checkUpdates` | `true` | Check GitHub for a newer version at launch |
+| `askSaveServerOnNewGame` | `true` | Ask where to store the shared saves on *Host New Game* |
+| `saveServerHistory` | `[]` | Save servers used before (pre-filled in that question) |
 
 Passwords, the admin key and shared-saves codes are **encrypted with Windows (DPAPI)** in `config.json` and
 `relaunch.json`: only your Windows account on this PC can read them. Old plain-text values are still read and

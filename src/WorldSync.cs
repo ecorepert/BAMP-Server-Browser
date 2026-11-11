@@ -93,8 +93,12 @@ namespace BAMPServerBrowser
             int at = code.LastIndexOf('@');
             if (at < 6 || at >= code.Length - 1) return null;
             string key = code.Substring(0, at), host = code.Substring(at + 1);
-            if (key.Length > 128 || host.Length > 255 || host.Any(c => char.IsWhiteSpace(c) || c == '/' || c == '\\' || c == '?' || c == '#' || c == '@')) return null;
-            return (key, "http://" + host);
+            string scheme = "http://";
+            if (host.StartsWith("https://", StringComparison.OrdinalIgnoreCase)) { scheme = "https://"; host = host.Substring(8); }
+            else if (host.StartsWith("http://", StringComparison.OrdinalIgnoreCase)) host = host.Substring(7);
+            host = host.TrimEnd('/');
+            if (key.Length > 128 || host.Length == 0 || host.Length > 255 || host.Any(c => char.IsWhiteSpace(c) || c == '/' || c == '\\' || c == '?' || c == '#' || c == '@')) return null;
+            return (key, scheme + host);
         }
 
         private static List<Target> Targets()

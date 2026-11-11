@@ -26,6 +26,7 @@ namespace BAMPServerBrowser
             _host.AddComponent<ServerBrowser>();
             JoinPassword.Install();
             AdminChannel.Install();
+            SaveServerPrompt.Install();
             if (DedicatedHost.Requested) _host.AddComponent<DedicatedHost>();
             Info("loaded v" + BuildInfo.Short + " - master " + BrowserConfig.Current.masterUrl);
             return Task.CompletedTask;
@@ -35,6 +36,7 @@ namespace BAMPServerBrowser
         {
             JoinPassword.Uninstall();
             AdminChannel.Uninstall();
+            SaveServerPrompt.Uninstall();
             if (_host != null)
             {
                 var b = _host.GetComponent<ServerBrowser>();
