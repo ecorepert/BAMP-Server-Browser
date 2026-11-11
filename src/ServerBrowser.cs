@@ -1095,11 +1095,12 @@ namespace BAMPServerBrowser
         private bool _ssTestOk, _ssTesting, _ssDontAsk;
         private string _ssUser = "";
         private float _ssCopiedAt = -100f;
-        private const string MasterRawUrl = "https://raw.githubusercontent.com/ecorepert/BAMP-Server-Browser/main/master/";
+        private const string InstallScriptUrl = "https://github.com/ecorepert/BAMP-Server-Browser/raw/main/master/install.sh";
 
         /// <summary>
         /// Commande à coller dans un terminal du PC (PowerShell) : se connecte au VPS en SSH, télécharge
-        /// master.py et install.sh depuis GitHub et installe le serveur de sauvegardes sur le port de l'adresse.
+        /// install.sh depuis GitHub (qui récupère lui-même le dernier master.py) et installe le serveur
+        /// de sauvegardes sur le port de l'adresse.
         /// </summary>
         private string VpsInstallCommand(out bool hasHost, out bool portGiven, out int port)
         {
@@ -1113,7 +1114,7 @@ namespace BAMPServerBrowser
             }
             string user = new string((_ssUser ?? "").Trim().Where(c => char.IsLetterOrDigit(c) || c == '.' || c == '_' || c == '-').ToArray());
             if (user.Length == 0) user = "root";
-            return $"ssh -t {user}@{host} \"cd /tmp && curl -fsSL {MasterRawUrl}master.py -o master.py && curl -fsSL {MasterRawUrl}install.sh -o install.sh && sudo sh install.sh {port}\"";
+            return $"ssh -t {user}@{host} \"curl -fsSL {InstallScriptUrl} -o /tmp/bamp-install.sh && sudo sh /tmp/bamp-install.sh {port} latest\"";
         }
 
         private void OpenSaveServerDialog(MPCanvasUI hostNewUi)

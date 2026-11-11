@@ -100,12 +100,19 @@ The public list server **stores no saves**; it only lists games. Each group choo
 
 ### Option — on your own private VPS (the host's PC can be off)
 
-On the VPS (Debian/Ubuntu or any systemd Linux with python3):
+Easiest: in the game, *Host New Game* → *My own server* → type the VPS address → **Copy** the command and
+paste it in PowerShell on your PC. It is this one line (Debian/Ubuntu or any systemd Linux with python3 and curl):
 
 ```bash
-# copy master/master.py and master/install.sh to the VPS, then in that folder:
-sudo sh install.sh          # port 8787
-sudo sh install.sh 9000     # or another port
+ssh -t root@YOUR_VPS "curl -fsSL https://github.com/ecorepert/BAMP-Server-Browser/raw/main/master/install.sh -o /tmp/bamp-install.sh && sudo sh /tmp/bamp-install.sh 8787 latest"
+```
+
+Or by hand, on the VPS, in a folder that contains `master/master.py` and `master/install.sh`:
+
+```bash
+sudo sh install.sh              # port 8787
+sudo sh install.sh 9000         # or another port
+sudo sh install.sh 8787 latest  # download the latest master.py from GitHub first
 ```
 
 The script installs a hardened systemd service (`bamp-master`), opens the port in `ufw` if it is

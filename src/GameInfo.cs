@@ -100,7 +100,7 @@ namespace BAMPServerBrowser
     public static class UpdateCheck
     {
         public const string RepoUrl = "https://github.com/ecorepert/BAMP-Server-Browser";
-        private const string VersionUrl = "https://raw.githubusercontent.com/ecorepert/BAMP-Server-Browser/main/version.json";
+        private const string VersionUrl = "https://github.com/ecorepert/BAMP-Server-Browser/raw/main/version.json";
         public static volatile string NewVersion = "";
         public static volatile string Notes = "";
         private static bool _started;
