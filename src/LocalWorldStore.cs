@@ -28,6 +28,8 @@ namespace BAMPServerBrowser
         private const int KeepVersions = 10;
         private const int RatePerMin = 90;
         private const int MaxConcurrent = 16;
+        /// <summary>Place disque maximale de toutes les sauvegardes stockées sur ce PC.</summary>
+        private const long MaxTotalBytes = 2L * 1024 * 1024 * 1024;
         private static readonly Regex IdRe = new Regex("^[0-9a-fA-F]{8,64}$");
 
         private static TcpListener _listener;
@@ -43,15 +45,21 @@ namespace BAMPServerBrowser
         public static string LastError = "";
 
         private static string _root = "";
+        /// <summary>Seul groupe accepté : celui du propriétaire de ce PC (tout autre code est refusé).</summary>
+        private static volatile string _allowedGroupDir = "";
+        public static string GroupKeyInUse = "";
         private static string Root => _root;
 
-        public static void Start(int port)
+        public static void Start(int port, string groupKey)
         {
-            if (_running && _port == port) return;
+            if (_running && _port == port && GroupKeyInUse == (groupKey ?? "")) return;
             Stop();
             try
             {
                 _root = Path.Combine(Application.persistentDataPath, "BAMPServerBrowser", "store"); // thread principal
+                GroupKeyInUse = groupKey ?? "";
+                _allowedGroupDir = GroupDir(GroupKeyInUse) ?? "";
+                if (_allowedGroupDir.Length == 0) throw new InvalidOperationException("group code too short");
                 Directory.CreateDirectory(Root);
                 _listener = new TcpListener(IPAddress.Any, port);
                 _listener.Start(32);
@@ -203,6 +211,12 @@ namespace BAMPServerBrowser
                 return BitConverter.ToString(sha.ComputeHash(Encoding.UTF8.GetBytes(v))).Replace("-", "").ToLowerInvariant();
         }
 
+        private static long StoreBytes()
+        {
+            try { return new DirectoryInfo(Root).EnumerateFiles("*", SearchOption.AllDirectories).Sum(f => f.Length); }
+            catch { return 0; }
+        }
+
         private static string GroupDir(string key)
         {
             if (string.IsNullOrEmpty(key) || key.Length < 6 || key.Length > 128) return null;
@@ -256,6 +270,9 @@ namespace BAMPServerBrowser
             string wid = parts.Length == 3 ? parts[2] : "";
             string g = GroupDir(r.Hd("X-Share-Key"));
             if (g == null) { Send(s, 403, "{\"error\":\"share key required (>= 6 chars)\"}"); return; }
+            // ce PC ne stocke que les sauvegardes de son propre groupe
+            string allowed = _allowedGroupDir;
+            if (allowed.Length == 0 || !string.Equals(g, allowed, StringComparison.OrdinalIgnoreCase)) { Send(s, 403, "{\"error\":\"unknown group\"}"); return; }
             if (wid.Length > 0 && !IdRe.IsMatch(wid)) { Send(s, 400, "{\"error\":\"bad id\"}"); return; }
             string d = wid.Length > 0 ? Path.Combine(g, wid) : null;
 
@@ -299,6 +316,7 @@ namespace BAMPServerBrowser
                     if (oldDeleted && savedAt <= ((long?)old["deletedAt"] ?? 0)) { Send(s, 410, "{\"error\":\"world deleted\"}"); return; }
                     if (old != null && !oldDeleted && ((long?)old["savedAt"] ?? 0) >= savedAt) { Send(s, 409, "{\"error\":\"older or same version\"}"); return; }
                     if (old == null && Directory.GetDirectories(g).Length >= MaxWorldsPerGroup) { Send(s, 507, "{\"error\":\"too many worlds in this group\"}"); return; }
+                    if (StoreBytes() + r.Body.Length > MaxTotalBytes) { Send(s, 507, "{\"error\":\"storage full on this PC\"}"); return; }
                     Directory.CreateDirectory(d);
                     string cur = Path.Combine(d, "current.bin");
                     if (File.Exists(cur) && old != null)

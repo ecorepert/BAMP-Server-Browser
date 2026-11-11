@@ -257,9 +257,9 @@ namespace BAMPServerBrowser
             _nextStoreCheck = Time.unscaledTime + 5f;
             if (Cfg.IsLocalStorageOwner)
             {
-                if (!LocalWorldStore.Running || LocalWorldStore.Port != Cfg.localStoragePort)
+                if (!LocalWorldStore.Running || LocalWorldStore.Port != Cfg.localStoragePort || LocalWorldStore.GroupKeyInUse != Cfg.GroupKey)
                 {
-                    LocalWorldStore.Start(Cfg.localStoragePort);
+                    LocalWorldStore.Start(Cfg.localStoragePort, Cfg.GroupKey);
                     if (!LocalWorldStore.Running) _nextStoreCheck = Time.unscaledTime + 60f;
                 }
                 if (!_ipAsked) { _ipAsked = true; try { MPNet.FetchPublicIpAsync(); } catch { } }

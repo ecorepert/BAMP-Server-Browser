@@ -32,7 +32,7 @@ namespace BAMPServerBrowser
 
         // ------------------------------------------------------------ état hôte
         public enum Role { Player, Admin }
-        private class Peer { public Role Role; public bool Verified; public bool AdminRefused; public bool Welcomed; }
+        private class Peer { public Role Role; public bool Verified; public bool AdminRefused; public bool Welcomed; public string SharedWorld = ""; }
         private static readonly Dictionary<string, Peer> Peers = new Dictionary<string, Peer>();
         private static readonly object PeersLock = new object();
 
@@ -144,15 +144,31 @@ namespace BAMPServerBrowser
             foreach (var (pid, p) in todo)
             {
                 SendTo(pid, new { t = "w", r = p.Role == Role.Admin ? "a" : "p", bad = p.AdminRefused ? 1 : 0 });
-                // les sauvegardes partagées ne sont données qu'aux joueurs qui connaissent un mot de passe
-                if ((p.Verified || p.Role == Role.Admin) && WorldSync.Enabled)
-                {
-                    string code = ""; try { code = Cfg.ShareCode(MPNet.PublicIp ?? ""); } catch { }
-                    if (code.Length > 0) SendTo(pid, new { t = "s", c = code });
-                }
                 if (p.Role == Role.Admin) SendSettings(pid);
                 ModEntry.Info($"[Admin] '{pid}' joined as {(p.Role == Role.Admin ? "admin" : "player")}{(p.Verified ? " (password ok)" : "")}.");
             }
+            TickShareWorld();
+        }
+
+        /// <summary>
+        /// Donne aux joueurs qui connaissent un mot de passe le code de sauvegarde DE CE MONDE seulement
+        /// (celui du groupe d'origine si on relance le monde d'un ami), dès que le monde est connu.
+        /// </summary>
+        private static void TickShareWorld()
+        {
+            string world = CurrentWorldId();
+            if (!WorldSync.ValidId(world)) return;
+            string code = "";
+            if (Cfg.joinedWorlds != null && Cfg.joinedWorlds.TryGetValue(world, out var jc)) code = jc ?? "";
+            else if (WorldSync.Enabled) { try { code = Cfg.ShareCode(MPNet.PublicIp ?? ""); } catch { } }
+            if (WorldSync.ParseCode(code) == null) return;
+            List<string> send;
+            lock (PeersLock)
+            {
+                send = Peers.Where(kv => kv.Value.Welcomed && (kv.Value.Verified || kv.Value.Role == Role.Admin) && kv.Value.SharedWorld != world).Select(kv => kv.Key).ToList();
+                foreach (var pid in send) Peers[pid].SharedWorld = world;
+            }
+            foreach (var pid in send) SendTo(pid, new { t = "s", c = code, i = world });
         }
 
         private static bool IsAdminPid(string pid)
@@ -359,17 +375,7 @@ namespace BAMPServerBrowser
             if (HostPid.Length == 0 || !string.Equals(from, HostPid, StringComparison.Ordinal)) return;
             switch (t)
             {
-                case "s":
-                {
-                    string code = ((string)o["c"] ?? "").Trim();
-                    if (code.Length >= 6 && code != Cfg.shareKey)
-                    {
-                        Cfg.shareKey = code;
-                        BrowserConfig.Save();
-                        ModEntry.Info("[Admin] shared saves of this game enabled.");
-                    }
-                    break;
-                }
+                case "s": AcceptSharedWorld(from, ((string)o["c"] ?? "").Trim(), ((string)o["i"] ?? "").Trim()); break;
                 case "g":
                     Settings.name = (string)o["n"] ?? ""; Settings.max = (int?)o["m"] ?? 0; Settings.lang = (string)o["l"] ?? "";
                     Settings.hasPlayerPw = (int?)o["pp"] == 1; Settings.hasAdminPw = (int?)o["ap"] == 1; Settings.publish = (int?)o["pub"] == 1;
@@ -395,6 +401,32 @@ namespace BAMPServerBrowser
                 case "w1": Worlds = _incoming ?? new List<RemoteWorldInfo>(); _incoming = null; WorldsStatus = Worlds.Count == 0 ? "No shared saves." : ""; break;
                 case "we": WorldsStatus = (string)o["m"] ?? ""; break;
             }
+        }
+
+        /// <summary>
+        /// L'hôte propose de synchroniser SON monde : seul ce monde est rattaché à son serveur.
+        /// Notre propre groupe et nos autres mondes ne changent pas. Refusé si ce monde existe déjà
+        /// sur ce PC sans venir de cet hôte (un hôte ne peut pas s'approprier un de nos mondes).
+        /// </summary>
+        private static void AcceptSharedWorld(string hostPid, string code, string world)
+        {
+            if (!WorldSync.ValidId(world)) return;
+            var parsed = WorldSync.ParseCode(code);
+            if (parsed == null) return;
+            if (string.Equals(parsed.Value.key, Cfg.GroupKey, StringComparison.Ordinal)) return; // monde de notre propre groupe
+            var map = Cfg.joinedWorlds ?? (Cfg.joinedWorlds = new Dictionary<string, string>());
+            if (map.TryGetValue(world, out var existing) && existing == code) return;
+            var (exists, lastHost) = WorldSync.LocalWorldInfo(world);
+            bool fromThisHost = string.Equals(lastHost, hostPid, StringComparison.OrdinalIgnoreCase);
+            if ((exists || existing != null) && !fromThisHost)
+            {
+                ModEntry.Warn($"[Admin] shared save offer for world {world} ignored: this world is already on this PC and was not hosted by '{hostPid}'.");
+                return;
+            }
+            if (existing == null && map.Count >= 50) { ModEntry.Warn("[Admin] too many joined worlds, shared save offer ignored."); return; }
+            map[world] = code;
+            BrowserConfig.Save();
+            ModEntry.Info($"[Admin] shared saves enabled for this world only (host server {code.Substring(code.LastIndexOf('@') + 1)}).");
         }
 
         private static void SendToHost(object payload)

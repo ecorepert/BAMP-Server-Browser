@@ -78,9 +78,14 @@ The public list server **stores no saves**; it only lists games. Each group choo
 ### Default — on the host's PC (nothing to install)
 
 - While the game runs, the host's PC serves the group's saves on **TCP port 8788**.
-- Friends who join with the **player password** (or the admin password) receive the host's shared-saves
-  code automatically (`groupe-…@HOST_PUBLIC_IP:8788`); their saves then sync on their own. Games without a
-  player password never hand out the code. (The code can still be set by hand in `config.json`, `shareKey`.)
+- Friends who join with the **player password** (or the admin password) automatically receive the shared-saves
+  code **of that world only** (`groupe-…@HOST_PUBLIC_IP:8788`, stored in `joinedWorlds`). Only that world then
+  syncs with the host's PC; the friend's own worlds stay in the friend's own group and are never sent to the
+  host. A host can't claim a world that is already on the friend's PC unless it hosted it. Games without a
+  player password never hand out the code.
+- The save server on the host's PC only accepts the host's own group code and stores at most 2 GB in total.
+- Downloaded worlds are checked: invalid world ids, paths leaving the save folder, executable files and
+  oversized archives are refused.
 - One-time setup on the host's router: **forward TCP 8788** to the host's PC, and allow Big Ambitions in
   the Windows firewall when asked.
 - When the host's PC is off, friends keep the copy they already have but cannot get a newer one.

@@ -30,6 +30,11 @@ namespace BAMPServerBrowser
         public string worldsUrl = "";
         /// <summary>Port du serveur de sauvegarde intégré au jeu (mode local). À ouvrir (TCP) sur la box.</summary>
         public int localStoragePort = 8788;
+        /// <summary>
+        /// Mondes reçus en rejoignant la partie d'un ami (id du monde -> "code@hote:port" de cet ami).
+        /// Ils ne se synchronisent qu'avec le serveur de cet ami ; tous les autres mondes restent dans notre groupe.
+        /// </summary>
+        public System.Collections.Generic.Dictionary<string, string> joinedWorlds = new System.Collections.Generic.Dictionary<string, string>();
         /// <summary>Langue parlée sur la partie hébergée (code court, ex. "FR"). Vide = déduite de la langue du système.</summary>
         public string language = "";
         /// <summary>Préférences de la liste des parties.</summary>
@@ -158,6 +163,7 @@ namespace BAMPServerBrowser
                 if (Array.IndexOf(Languages, (Current.language ?? "").Trim().ToUpperInvariant()) < 0) Current.language = SystemLanguageCode();
                 else Current.language = Current.language.Trim().ToUpperInvariant();
                 Current.listLanguage = (Current.listLanguage ?? "").Trim().ToUpperInvariant();
+                if (Current.joinedWorlds == null) Current.joinedWorlds = new System.Collections.Generic.Dictionary<string, string>();
                 if (Current.localStoragePort < 1024 || Current.localStoragePort > 65535) Current.localStoragePort = 8788;
                 Save();
             }
