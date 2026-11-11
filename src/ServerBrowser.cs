@@ -1089,10 +1089,32 @@ namespace BAMPServerBrowser
         // =====================================================================
         private bool _showSaveDlg, _saveDlgPlaced;
         private MPCanvasUI _saveDlgUi;            // non nul : lancer "Host New Game" après le choix
-        private Rect _saveDlgRect = new Rect(0, 0, 600, 470);
+        private Rect _saveDlgRect = new Rect(0, 0, 680, 640);
         private int _ssMode;                      // 0 = ce PC, 1 = mon serveur, 2 = garder le groupe d'un ami
         private string _ssUrl = "", _ssPort = "", _ssTest = "";
         private bool _ssTestOk, _ssTesting, _ssDontAsk;
+        private string _ssUser = "";
+        private float _ssCopiedAt = -100f;
+        private const string MasterRawUrl = "https://raw.githubusercontent.com/ecorepert/BAMP-Server-Browser/main/master/";
+
+        /// <summary>
+        /// Commande à coller dans un terminal du PC (PowerShell) : se connecte au VPS en SSH, télécharge
+        /// master.py et install.sh depuis GitHub et installe le serveur de sauvegardes sur le port de l'adresse.
+        /// </summary>
+        private string VpsInstallCommand(out bool hasHost, out bool portGiven, out int port)
+        {
+            string u = BrowserConfig.NormalizeUrl(_ssUrl);
+            string host = "YOUR_VPS_IP";
+            port = 8787; hasHost = false; portGiven = false;
+            if (u.Length > 0 && Uri.TryCreate(u, UriKind.Absolute, out var uri) && uri.Host.Length > 0)
+            {
+                host = uri.Host; hasHost = true;
+                if (!uri.IsDefaultPort) { port = uri.Port; portGiven = true; }
+            }
+            string user = new string((_ssUser ?? "").Trim().Where(c => char.IsLetterOrDigit(c) || c == '.' || c == '_' || c == '-').ToArray());
+            if (user.Length == 0) user = "root";
+            return $"ssh -t {user}@{host} \"cd /tmp && curl -fsSL {MasterRawUrl}master.py -o master.py && curl -fsSL {MasterRawUrl}install.sh -o install.sh && sudo sh install.sh {port}\"";
+        }
 
         private void OpenSaveServerDialog(MPCanvasUI hostNewUi)
         {
@@ -1104,6 +1126,7 @@ namespace BAMPServerBrowser
             _ssPort = Cfg.localStoragePort.ToString();
             _ssTest = ""; _ssTestOk = false; _ssTesting = false;
             _ssDontAsk = !Cfg.askSaveServerOnNewGame;
+            _ssUser = string.IsNullOrWhiteSpace(Cfg.sshUser) ? "root" : Cfg.sshUser;
             _saveDlgPlaced = false;
             _showSaveDlg = true;
         }
@@ -1143,6 +1166,7 @@ namespace BAMPServerBrowser
                 if (BrowserConfig.NormalizeUrl(raw).Length == 0) { _ssTest = "Invalid address. Example: 203.0.113.5:8787"; _ssTestOk = false; return; }
                 if (Cfg.CodeHost.Length > 0) Cfg.shareKey = BrowserConfig.NewGroupKey();
                 Cfg.worldsUrl = raw;
+                if (!string.IsNullOrWhiteSpace(_ssUser)) Cfg.sshUser = _ssUser.Trim();
                 Cfg.saveServerHistory.RemoveAll(x => string.Equals(x, raw, StringComparison.OrdinalIgnoreCase));
                 Cfg.saveServerHistory.Insert(0, raw);
                 while (Cfg.saveServerHistory.Count > 5) Cfg.saveServerHistory.RemoveAt(Cfg.saveServerHistory.Count - 1);
@@ -1202,7 +1226,31 @@ namespace BAMPServerBrowser
                         GUILayout.EndHorizontal();
                     }
                 }
-                GUILayout.Label("<size=11>      The server runs master.py with save storage on (install.sh, BAMP_WORLDS=1). A server that only lists games can't store saves.</size>", _small);
+                // ---- installation sur le VPS
+                GUILayout.Space(4);
+                GUILayout.BeginVertical(_box);
+                GUILayout.Label("<b>Not installed yet?</b> Install the save server on your VPS (Linux with python3 and curl):", _small);
+                GUILayout.BeginHorizontal();
+                GUILayout.Label("SSH user:", _small, GUILayout.Width(80));
+                _ssUser = Field(15, _ssUser, 32);
+                GUILayout.FlexibleSpace();
+                GUILayout.EndHorizontal();
+                string cmd = VpsInstallCommand(out bool hasHost, out bool portGiven, out int port);
+                GUILayout.Label("<size=11>1. Paste this command in a terminal on your PC (PowerShell), then type your VPS password when asked:</size>", _small);
+                GUILayout.BeginHorizontal();
+                GUILayout.Label("<size=10><color=#cfe3ff>" + Esc(cmd) + "</color></size>", _small);
+                GUI.enabled = hasHost;
+                if (GUILayout.Button(Time.unscaledTime - _ssCopiedAt < 2.5f ? "Copied!" : "Copy", GUILayout.Width(80), GUILayout.Height(30)))
+                {
+                    try { GUIUtility.systemCopyBuffer = cmd; _ssCopiedAt = Time.unscaledTime; } catch { }
+                }
+                GUI.enabled = true;
+                GUILayout.EndHorizontal();
+                if (!hasHost) GUILayout.Label("<size=11>Type the address of your VPS above first (for example 203.0.113.5:8787).</size>", _bad);
+                else if (!portGiven) GUILayout.Label($"<size=11>No port in the address: the server is installed on port {port}. Use the address <b>{Esc(new Uri(BrowserConfig.NormalizeUrl(_ssUrl)).Host)}:{port}</b>.</size>", _small);
+                GUILayout.Label("<size=11>2. When it says the server is running, click <b>Test</b>.</size>", _small);
+                GUILayout.Label("<size=10>With an SSH key, add  -i C:\\path\\to\\key  after ssh. If this VPS already runs the game list on this port, the same service will also store the saves.</size>", _small);
+                GUILayout.EndVertical();
             }
 
             // ---- groupe d'un ami (ancienne configuration)
@@ -1329,7 +1377,7 @@ namespace BAMPServerBrowser
         {
             if (_focus == 0) return;
             bool visible = ((_focus == 1 || _focus == 6) && _show) || ((_focus == 2 || _focus == 3 || _focus == 5 || _focus == 7) && ShowHostPanel)
-                           || (_focus >= 8 && _focus <= 12 && _showAdmin) || ((_focus == 13 || _focus == 14) && _showSaveDlg);
+                           || (_focus >= 8 && _focus <= 12 && _showAdmin) || ((_focus == 13 || _focus == 14 || _focus == 15) && _showSaveDlg);
             if (!visible) { _focus = 0; return; }
             if (Input.GetMouseButtonDown(0))
             {

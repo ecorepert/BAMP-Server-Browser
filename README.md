@@ -71,7 +71,8 @@ To uninstall, delete the `ModsLocal\BAMPServerBrowser` folder.
   hosts its copy of the world (from the shared saves) with the same name, description, language and passwords.
 - **Host**: *Host New Game* or *Host Saved Game*. *Host New Game* first asks **where to store the shared
   saves**: *This PC* (default, with its port) or *My own server* (address pre-filled from your config and the
-  servers you used before, with a *Test* button). The **Publish my game** panel appears in the lobby; its
+  servers you used before, with a *Test* button, and the ready-to-paste **SSH command that installs the save
+  server on your VPS** with a *Copy* button). The **Publish my game** panel appears in the lobby; its
   *Change* button opens the same choice later. The headless server is never asked.
 - **F9**: show/hide the list at any time (joining needs the main menu).
 - Panels can be dragged by their title bar.
@@ -155,6 +156,7 @@ If your hosting provider has its own firewall, open the port there as well. Chec
 | `checkUpdates` | `true` | Check GitHub for a newer version at launch |
 | `askSaveServerOnNewGame` | `true` | Ask where to store the shared saves on *Host New Game* |
 | `saveServerHistory` | `[]` | Save servers used before (pre-filled in that question) |
+| `sshUser` | `root` | SSH user used in the VPS install command |
 
 Passwords, the admin key and shared-saves codes are **encrypted with Windows (DPAPI)** in `config.json` and
 `relaunch.json`: only your Windows account on this PC can read them. Old plain-text values are still read and
