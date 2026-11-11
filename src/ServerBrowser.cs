@@ -560,7 +560,17 @@ namespace BAMPServerBrowser
                 {
                     string who = string.IsNullOrEmpty(cur.hostName) ? "the host" : Esc(cur.hostName);
                     var rl = AdminChannel.GetRelaunch(cur.worldId);
-                    if (rl == null)
+                    bool mineOff = own.Length > 0 && cur.steamId == own;
+                    if (mineOff)
+                    {
+                        GUILayout.Label($"Your game is offline (last seen {Ago(cur.offlineFor)}). Host it again with the latest save of this world on your PC:", _small);
+                        GUI.enabled = !string.IsNullOrEmpty(cur.worldId);
+                        if (GUILayout.Button("Host this game again", GUILayout.Height(34))) HostAgain(cur);
+                        GUI.enabled = true;
+                        if (string.IsNullOrEmpty(cur.worldId))
+                            GUILayout.Label("<size=10>This entry was listed before the update: host it once from Multiplayer > Host Saved Game.</size>", _small);
+                    }
+                    else if (rl == null)
                     {
                         GUILayout.Label($"This game is offline (last seen {Ago(cur.offlineFor)}). Only {who} or an admin of this game can start it again.", _small);
                         GUILayout.Label("<size=10>Admins: join this game once with the admin password while it is online, then you can relaunch it from here when it is offline.</size>", _small);
@@ -652,22 +662,13 @@ namespace BAMPServerBrowser
             if (!Bridge.InMainMenu) { _joinMsg = "Go back to the main menu first."; return; }
             if (!AdminChannel.CheckRelaunchPassword(rl, pw)) { _joinMsg = "Wrong admin password."; return; }
 
-            MPSaveManager.MpVariant pick = null;
-            try
-            {
-                pick = (MPSaveManager.ListPlaythroughs() ?? new List<MPSaveManager.MpPlaythrough>())
-                    .SelectMany(p => p.Variants ?? new List<MPSaveManager.MpVariant>())
-                    .Where(v => string.Equals(v.PlaythroughId, rl.worldId, StringComparison.OrdinalIgnoreCase) && !string.IsNullOrEmpty(v.SessionName))
-                    .OrderByDescending(v => v.SavedAtUnix).FirstOrDefault();
-            }
-            catch (Exception ex) { ModEntry.Warn("relaunch: " + ex.Message); }
+            var pick = FindLocalWorld(rl.worldId);
             if (pick == null)
             {
                 _joinMsg = "This world is not on your PC yet. It arrives with the shared saves after you have played it (go back to the main menu once after playing so it can sync).";
                 return;
             }
-            var ui = MPCanvasUI.Instance;
-            if (ui == null || LoadPickedSessionM == null) { _joinMsg = "Multiplayer mod not found or incompatible version."; return; }
+            if (MPCanvasUI.Instance == null || LoadPickedSessionM == null) { _joinMsg = "Multiplayer mod not found or incompatible version."; return; }
 
             // réglages de la partie d'origine (mêmes nom et mots de passe)
             if (!string.IsNullOrWhiteSpace(rl.name)) Cfg.serverName = rl.name;
@@ -679,15 +680,47 @@ namespace BAMPServerBrowser
             Cfg.publish = true;
             BrowserConfig.Save();
             _editName = Cfg.serverName; _editDesc = Cfg.description; _editPw = Cfg.joinPassword; _editApw = Cfg.adminPassword;
+            if (StartHosting(pick)) ModEntry.Info($"[Admin] relaunching '{s.name}' (world {rl.worldId}, local copy day {pick.Day}).");
+        }
+
+        private static MPSaveManager.MpVariant FindLocalWorld(string worldId)
+        {
+            if (string.IsNullOrEmpty(worldId)) return null;
             try
             {
-                LoadPickedSessionM.Invoke(ui, new object[] { pick.SessionName, pick.PlaythroughId ?? "" });
-                ModEntry.Info($"[Admin] relaunching '{s.name}' (world {rl.worldId}, local copy day {pick.Day}).");
+                return (MPSaveManager.ListPlaythroughs() ?? new List<MPSaveManager.MpPlaythrough>())
+                    .SelectMany(p => p.Variants ?? new List<MPSaveManager.MpVariant>())
+                    .Where(v => string.Equals(v.PlaythroughId, worldId, StringComparison.OrdinalIgnoreCase) && !string.IsNullOrEmpty(v.SessionName))
+                    .OrderByDescending(v => v.SavedAtUnix).FirstOrDefault();
+            }
+            catch (Exception ex) { ModEntry.Warn("local world: " + ex.Message); return null; }
+        }
+
+        /// <summary>Ouvre le salon du mod multijoueur avec cette sauvegarde (comme "Host Saved Game").</summary>
+        private bool StartHosting(MPSaveManager.MpVariant pick)
+        {
+            try
+            {
+                LoadPickedSessionM.Invoke(MPCanvasUI.Instance, new object[] { pick.SessionName, pick.PlaythroughId ?? "" });
                 _joinMsg = "";
                 _pwPromptKey = ""; _joinPw = ""; _focus = 0;
                 _show = false; _autoShown = false;
+                return true;
             }
-            catch (Exception ex) { _joinMsg = "Could not start the game: " + (ex.InnerException ?? ex).Message; }
+            catch (Exception ex) { _joinMsg = "Could not start the game: " + (ex.InnerException ?? ex).Message; return false; }
+        }
+
+        /// <summary>L'hôte relance sa propre partie hors ligne (sa dernière sauvegarde de ce monde).</summary>
+        private void HostAgain(ServerEntry s)
+        {
+            if (Hosting) { _joinMsg = "You are already hosting a game."; return; }
+            try { if (MPClient.IsConnected || MPClient.IsConnecting) { _joinMsg = "Leave the game you are in first."; return; } } catch { }
+            if (!Bridge.InMainMenu) { _joinMsg = "Go back to the main menu first."; return; }
+            var pick = FindLocalWorld(s.worldId);
+            if (pick == null) { _joinMsg = "The save of this world was not found on this PC."; return; }
+            if (MPCanvasUI.Instance == null || LoadPickedSessionM == null) { _joinMsg = "Multiplayer mod not found or incompatible version."; return; }
+            if (!Cfg.publish) { Cfg.publish = true; BrowserConfig.Save(); }
+            if (StartHosting(pick)) ModEntry.Info($"hosting again '{s.name}' (world {s.worldId}, day {pick.Day}).");
         }
 
         private void OpenPasswordPrompt(ServerEntry s, bool admin, bool ip)

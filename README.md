@@ -60,6 +60,8 @@ To uninstall, delete the `ModsLocal\BAMPServerBrowser` folder.
   the password is asked right after *Join* (player password, or admin password for admin rights). For an
   open game, *Join as admin* asks for the admin password.
 - **Admin**: once connected with the admin password, press **F9** → *Manage this game*.
+- **Host your own offline game again**: select it in the list (marked *(you)*) → *Host this game again*: the
+  lobby opens with your latest save of that world.
 - **Relaunch an offline game (admin only)**: an admin who joined the game once with the admin password
   can restart it when it is offline: select it in the list → *Relaunch as admin* → admin password. Their PC
   hosts its copy of the world (from the shared saves) with the same name, description, language and passwords.
