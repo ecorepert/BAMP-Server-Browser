@@ -17,6 +17,7 @@ namespace BAMPServerBrowser
     {
         public const string RefuseTag = "BAMP:password";
         private const string Field = "bsbPw";
+        private const string ModField = "bsbV";
 
         /// <summary>Mot de passe à envoyer lors de la prochaine connexion (saisi dans la liste).</summary>
         public static volatile string Pending = "";
@@ -64,15 +65,33 @@ namespace BAMPServerBrowser
         {
             try
             {
-                string pw = BrowserConfig.Current.joinPassword;
-                if (string.IsNullOrEmpty(pw) || env == null) return true;
-                string sent = "";
-                try { sent = (string)JObject.Parse(env.Data ?? "{}")[Field] ?? ""; } catch { }
-                if (sent.Length > 0 && string.Equals(sent, Hash(pw), StringComparison.Ordinal)) return true;
+                if (env == null) return true;
+                JObject o;
+                try { o = JObject.Parse(env.Data ?? "{}"); } catch { o = new JObject(); }
+                string sent = (string)o[Field] ?? "";
+                string who = (string)o["PlayerId"] ?? "";
+                bool hasMod = o[ModField] != null || sent.Length > 0;
+                string pw = BrowserConfig.Current.joinPassword ?? "";
+                string apw = BrowserConfig.Current.adminPassword ?? "";
 
-                string who = "?";
-                try { who = (string)JObject.Parse(env.Data ?? "{}")["PlayerId"] ?? "?"; } catch { }
-                ModEntry.Info($"[Password] connection from '{who}' refused: password {(sent.Length == 0 ? "missing" : "wrong")}.");
+                if (apw.Length > 0 && sent.Length > 0 && string.Equals(sent, Hash(apw), StringComparison.Ordinal))
+                {
+                    AdminChannel.OnHostAccepted(who, hasMod, AdminChannel.Role.Admin, verified: true, adminRefused: false);
+                    return true;
+                }
+                if (pw.Length == 0)
+                {
+                    // partie ouverte : un mot de passe faux (tentative admin) laisse entrer comme simple joueur
+                    AdminChannel.OnHostAccepted(who, hasMod, AdminChannel.Role.Player, verified: false, adminRefused: sent.Length > 0);
+                    return true;
+                }
+                if (sent.Length > 0 && string.Equals(sent, Hash(pw), StringComparison.Ordinal))
+                {
+                    AdminChannel.OnHostAccepted(who, hasMod, AdminChannel.Role.Player, verified: true, adminRefused: false);
+                    return true;
+                }
+
+                ModEntry.Info($"[Password] connection from '{(who.Length > 0 ? who : "?")}' refused: password {(sent.Length == 0 ? "missing" : "wrong")}.");
                 try { peer.Disconnect(Encoding.UTF8.GetBytes(RefuseTag)); } catch { }
                 return false; // le Hello n'est pas traité par le mod multijoueur
             }
@@ -89,10 +108,11 @@ namespace BAMPServerBrowser
             try
             {
                 if (env == null || env.Type != MessageType.Hello) return;
+                AdminChannel.ResetClient();
                 string pw = Pending;
-                if (string.IsNullOrEmpty(pw)) return;
                 var o = JObject.Parse(env.Data ?? "{}");
-                o[Field] = Hash(pw);
+                o[ModField] = 1; // signale à l'hôte que ce joueur a ce mod (messages admin / sauvegardes)
+                if (!string.IsNullOrEmpty(pw)) o[Field] = Hash(pw);
                 env.Data = o.ToString(Newtonsoft.Json.Formatting.None);
                 LastRefused = false;
             }
@@ -103,6 +123,7 @@ namespace BAMPServerBrowser
         {
             try
             {
+                AdminChannel.ResetClient();
                 if (extra != null && extra.Length > 0 && Encoding.UTF8.GetString(extra) == RefuseTag)
                 {
                     LastRefused = true;

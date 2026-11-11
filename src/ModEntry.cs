@@ -25,6 +25,7 @@ namespace BAMPServerBrowser
             Object.DontDestroyOnLoad(_host);
             _host.AddComponent<ServerBrowser>();
             JoinPassword.Install();
+            AdminChannel.Install();
             if (DedicatedHost.Requested) _host.AddComponent<DedicatedHost>();
             Info("loaded v1.0.0 - master " + BrowserConfig.Current.masterUrl);
             return Task.CompletedTask;
@@ -33,6 +34,7 @@ namespace BAMPServerBrowser
         public override Task OnUnloadAsync()
         {
             JoinPassword.Uninstall();
+            AdminChannel.Uninstall();
             if (_host != null)
             {
                 var b = _host.GetComponent<ServerBrowser>();

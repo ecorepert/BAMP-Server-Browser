@@ -42,19 +42,20 @@ namespace BAMPServerBrowser
         // ---------- UI ----------
         private float _scale = 1f;
         private Rect _listRect = new Rect(20, 90, 640, 800);
-        private Rect _hostRect = new Rect(20, 230, 440, 400);
+        private Rect _hostRect = new Rect(20, 230, 480, 470);
         private bool _hostRectPlaced;
         private bool _styles;
         private GUIStyle _win, _row, _rowSel, _small, _title, _bad, _good, _box;
         private Texture2D _dotOn, _dotOff;
-        private bool _showShareCode;
+
         private EventSystem _blockedEs;
         private bool _showIp;
         private WorldSync _sync;
-        private string _editKey;
         private string _editPw;
         private string _joinPw = "";
-        private string _pwForId = "";
+        private string _pwPromptKey = "";
+        private bool _pwPromptAdmin, _pwPromptIp;
+        private string _editApw;
 
         // Champs texte maison : l'IMGUI ne reçoit pas le clavier dans ce jeu,
         // on lit Input.inputString comme le fait le mod multijoueur.
@@ -72,15 +73,35 @@ namespace BAMPServerBrowser
             }
             catch { }
             _editName = Cfg.serverName;
-            _editKey = Cfg.shareKey;
+            _editApw = Cfg.adminPassword;
+            AdminChannel.SettingsChanged = () =>
+            {
+                _editName = Cfg.serverName; _editDesc = Cfg.description; _editPw = Cfg.joinPassword; _editApw = Cfg.adminPassword;
+                if (Cfg.publish) _nextRegTry = 0;
+                PushUpdateNow();
+            };
             _editPw = Cfg.joinPassword;
             _sync = new WorldSync(a => _main.Enqueue(a));
             _editDesc = Cfg.description;
         }
 
+        private float _nextAdminTick;
+        private bool _wasHostingAdmin;
+
         private void Update()
         {
             while (_main.TryDequeue(out var a)) { try { a(); } catch (Exception ex) { ModEntry.Warn(ex.ToString()); } }
+            while (AdminChannel.Main.TryDequeue(out var a2)) { try { a2(); } catch (Exception ex) { ModEntry.Warn("[Admin] " + ex); } }
+            if (JoinPassword.LastRefused && _pwPromptKey.Length == 0 && _selectedId.Length > 0)
+            {
+                var refused = _servers.FirstOrDefault(x => Key(x) == _selectedId);
+                if (refused != null) { OpenPasswordPrompt(refused, admin: false, ip: false); JoinPassword.LastRefused = true; _show = true; }
+            }
+            bool hostingNow = Hosting;
+            if (hostingNow && Time.unscaledTime >= _nextAdminTick) { _nextAdminTick = Time.unscaledTime + 1f; AdminChannel.TickHost(); }
+            if (!hostingNow && _wasHostingAdmin) AdminChannel.ResetHost();
+            _wasHostingAdmin = hostingNow;
+            if (_showAdmin) { bool c = false; try { c = MPClient.IsConnected; } catch { } if (!c || !AdminChannel.IsAdmin) _showAdmin = false; }
 
             if (Input.GetKeyDown(Cfg.ToggleKeyCode))
             {
@@ -284,12 +305,15 @@ namespace BAMPServerBrowser
             if (Hosting) { _joinMsg = "You are already hosting a game."; return; }
             try { if (MPClient.IsConnected || MPClient.IsConnecting) { _joinMsg = "Already connected / connecting."; return; } } catch { }
 
-            JoinPassword.Pending = s.hasPassword ? (_pwForId == Key(s) ? _joinPw : "") : "";
-            if (s.hasPassword && string.IsNullOrEmpty(JoinPassword.Pending)) { _joinMsg = "This game is password protected: enter the password."; return; }
+            JoinPassword.Pending = _pwPromptKey == Key(s) ? (_joinPw ?? "").Trim() : "";
+            if (s.hasPassword && string.IsNullOrEmpty(JoinPassword.Pending)) { OpenPasswordPrompt(s, admin: false, ip: forceIp); return; }
+            JoinPassword.LastRefused = false;
             string err = Bridge.Join(addr, port);
             if (err != null) { _joinMsg = err; return; }
             ModEntry.Info("join '" + s.name + "' via " + addr + (addr.StartsWith("steam:") ? "" : ":" + port));
             _joinMsg = "";
+            _pwPromptKey = "";
+            _joinPw = "";
             _show = false;
             _autoShown = false;
         }
@@ -357,7 +381,7 @@ namespace BAMPServerBrowser
 
         private void OnGUI()
         {
-            if (!_show && !ShowHostPanel) return;
+            if (!_show && !ShowHostPanel && !_showAdmin) return;
             InitStyles();
             _scale = Mathf.Max(0.5f, Screen.height / 1080f);
             GUI.matrix = Matrix4x4.TRS(Vector3.zero, Quaternion.identity, new Vector3(_scale, _scale, 1f));
@@ -372,6 +396,7 @@ namespace BAMPServerBrowser
 
             if (_show) _listRect = Clamp(GUI.Window(0x42A1, _listRect, DrawList, "Open multiplayer games", _win), vw, vh);
             if (ShowHostPanel) _hostRect = Clamp(GUI.Window(0x42A2, _hostRect, DrawHost, "Publish my game", _win), vw, vh);
+            if (_showAdmin) _adminRect = Clamp(GUI.Window(0x42A3, _adminRect, DrawAdmin, "Manage this game (admin)", _win), vw, vh);
 
             if (Event.current.type == EventType.MouseUp &&
                 (_hostRect.x != Cfg.hostPanelX || _hostRect.y != Cfg.hostPanelY || _listRect.x != Cfg.listPanelX || _listRect.y != Cfg.listPanelY))
@@ -533,54 +558,180 @@ namespace BAMPServerBrowser
                 }
                 else
                 {
-                    if (cur.hasPassword)
+                    bool canSteam = cur.steamId.Length > 0 && cur.steamId != own;
+                    bool canIp = cur.ip.Length > 0 && cur.port > 0;
+                    if (cur.modVersion != _bampVersion)
+                        GUILayout.Label($"Different mod version (host v{Esc(cur.modVersion)}, you v{_bampVersion}): the connection may be refused.", _bad);
+                    if (_pwPromptKey == Key(cur))
                     {
-                        if (_pwForId != Key(cur)) { _pwForId = Key(cur); _joinPw = ""; }
+                        // ---- mot de passe demandé après le clic sur Join ----
+                        GUILayout.Label(_pwPromptAdmin
+                            ? "Admin password (gives the right to change the game settings and delete shared saves):"
+                            : "This game needs a password. Enter the player password, or the admin password to get admin rights:", _small);
                         GUILayout.BeginHorizontal();
                         GUILayout.Label("Password:", _small, GUILayout.Width(95));
                         _joinPw = Field(6, _joinPw, 64, mask: true);
                         GUILayout.EndHorizontal();
+                        if (JoinPassword.LastRefused) GUILayout.Label("Wrong password: the host refused the connection.", _bad);
+                        GUILayout.BeginHorizontal();
+                        GUI.enabled = (canSteam || canIp) && (_joinPw ?? "").Trim().Length > 0;
+                        if (GUILayout.Button("Join", GUILayout.Height(34))) Join(cur, _pwPromptIp);
+                        GUI.enabled = true;
+                        if (GUILayout.Button("Cancel", GUILayout.Height(34), GUILayout.Width(110))) { _pwPromptKey = ""; _joinPw = ""; _focus = 0; JoinPassword.LastRefused = false; }
+                        GUILayout.EndHorizontal();
                     }
-                    if (JoinPassword.LastRefused) GUILayout.Label("Connection refused by the host: wrong password.", _bad);
-                    if (cur.modVersion != _bampVersion)
-                        GUILayout.Label($"Different mod version (host v{Esc(cur.modVersion)}, you v{_bampVersion}): the connection may be refused.", _bad);
-                    GUILayout.BeginHorizontal();
-                    bool canSteam = cur.steamId.Length > 0 && cur.steamId != own;
-                    bool canIp = cur.ip.Length > 0 && cur.port > 0;
-                    GUI.enabled = canSteam || canIp;
-                    if (GUILayout.Button("Join", GUILayout.Height(34))) Join(cur, false);
-                    GUI.enabled = canIp && canSteam;
-                    if (GUILayout.Button(canIp ? $"Join by IP ({cur.ip}:{cur.port})" : "IP not available", GUILayout.Height(34))) Join(cur, true);
-                    GUI.enabled = true;
-                    GUILayout.EndHorizontal();
+                    else
+                    {
+                        GUILayout.BeginHorizontal();
+                        GUI.enabled = canSteam || canIp;
+                        if (GUILayout.Button(cur.hasPassword ? "Join (password)" : "Join", GUILayout.Height(34))) Join(cur, false);
+                        GUI.enabled = canIp && canSteam;
+                        if (GUILayout.Button(canIp ? $"Join by IP ({cur.ip}:{cur.port})" : "IP not available", GUILayout.Height(34))) Join(cur, true);
+                        GUI.enabled = canSteam || canIp;
+                        if (!cur.hasPassword && GUILayout.Button("Join as admin", GUILayout.Height(34), GUILayout.Width(120))) OpenPasswordPrompt(cur, admin: true, ip: false);
+                        GUI.enabled = true;
+                        GUILayout.EndHorizontal();
+                    }
                 }
             }
             if (_joinMsg.Length > 0) GUILayout.Label(_joinMsg, _bad);
             GUILayout.EndVertical();
 
-            // ---- sauvegardes partagées ----
-            GUILayout.Space(6);
-            GUILayout.Label("Shared saves with friends", _title);
-            GUILayout.Label("<size=11>Everyone who enters the same code shares the same multiplayer worlds. It is not a game password and not the admin key.</size>", _small);
-            GUILayout.BeginHorizontal();
-            GUILayout.Label("Shared code:", _small, GUILayout.Width(95));
-            _editKey = Field(4, _editKey, 64, mask: _focus != 4);
-            bool keyDirty = (_editKey ?? "").Trim() != (Cfg.shareKey ?? "");
-            GUI.enabled = keyDirty;
-            if (GUILayout.Button("Save", GUILayout.Width(80)))
+            bool connected = false; try { connected = MPClient.IsConnected; } catch { }
+            if (connected && AdminChannel.IsAdmin)
             {
-                string k = (_editKey ?? "").Trim();
-                int at = k.LastIndexOf('@');
-                string kk = at > 0 ? k.Substring(0, at) : k;
-                if (k.Length > 0 && kk.Length < 6) _joinMsg = "The shared code must be at least 6 characters long.";
-                else { Cfg.shareKey = k; BrowserConfig.Save(); _sync.SyncNow(); _joinMsg = ""; }
+                GUILayout.BeginHorizontal(_box);
+                GUILayout.Label("<color=#4cd964>You are admin of the game you are in.</color>", _small);
+                if (GUILayout.Button("Manage this game", GUILayout.Width(170))) OpenAdmin();
+                GUILayout.EndHorizontal();
             }
-            GUI.enabled = WorldSync.Enabled && !_sync.Busy;
-            if (GUILayout.Button(_sync.Busy ? "..." : "Sync now", GUILayout.Width(95))) _sync.SyncNow();
-            GUI.enabled = true;
+            else if (connected && AdminChannel.AdminRefused)
+                GUILayout.Label("Wrong admin password: you joined as a normal player.", _bad);
+
+            GUILayout.Label($"<size=10>{Cfg.toggleKey}: show/hide · Double-click to join · Green dot = online</size>", _small);
+            GUI.DragWindow(new Rect(0, 0, 10000, 28));
+        }
+
+        private void OpenPasswordPrompt(ServerEntry s, bool admin, bool ip)
+        {
+            _pwPromptKey = Key(s);
+            _pwPromptAdmin = admin;
+            _pwPromptIp = ip;
+            _joinPw = "";
+            _joinMsg = "";
+            JoinPassword.LastRefused = false;
+            _focus = 6; _focusBuf = ""; _focusMax = 64;
+        }
+
+        // =====================================================================
+        //  Fenêtre admin (joueur connecté avec le mot de passe admin)
+        // =====================================================================
+        private bool _showAdmin;
+        private Rect _adminRect = new Rect(680, 90, 480, 600);
+        private string _aName = "", _aDesc = "", _aPw = "", _aApw = "", _aLang = "";
+        private int _aMax = 8;
+        private bool _aPub = true, _aSynced;
+        private string _aConfirmDel = "";
+        private Vector2 _aScroll;
+
+        private void OpenAdmin()
+        {
+            _showAdmin = true;
+            _aSynced = false;
+            AdminChannel.Settings.loaded = false;
+            AdminChannel.RequestAll();
+        }
+
+        private void DrawAdmin(int id)
+        {
+            var st = AdminChannel.Settings;
+            GUILayout.BeginHorizontal();
+            GUILayout.Label("Changes are applied by the host right away.", _small);
+            GUILayout.FlexibleSpace();
+            if (GUILayout.Button("Reload", GUILayout.Width(80))) OpenAdmin();
+            if (GUILayout.Button("X", GUILayout.Width(28))) _showAdmin = false;
             GUILayout.EndHorizontal();
-            GUILayout.Label("<size=11>" + Esc(_sync.Status) + "</size>", _small);
-            GUILayout.Label($"<size=10>{Cfg.toggleKey}: show/hide · Double-click to join · Green dot = online · The code for friends is in \"Publish my game\" while you host.</size>", _small);
+
+            if (!st.loaded && !_aSynced) { GUILayout.Label("Loading the game settings from the host...", _small); }
+            else
+            {
+                if (st.loaded && !_aSynced)
+                {
+                    _aSynced = true;
+                    _aName = st.name; _aDesc = st.desc; _aMax = st.max; _aPub = st.publish; _aLang = st.lang;
+                    _aPw = ""; _aApw = "";
+                }
+                GUILayout.Label("Game settings", _title);
+                GUILayout.BeginHorizontal(); GUILayout.Label("Name:", _small, GUILayout.Width(120)); _aName = Field(8, _aName, 48); GUILayout.EndHorizontal();
+                GUILayout.BeginHorizontal(); GUILayout.Label("Description:", _small, GUILayout.Width(120)); _aDesc = Field(9, _aDesc, 120); GUILayout.EndHorizontal();
+                GUILayout.BeginHorizontal();
+                GUILayout.Label("Language:", _small, GUILayout.Width(120));
+                {
+                    var langs = BrowserConfig.Languages;
+                    int li = Mathf.Max(0, Array.IndexOf(langs, _aLang));
+                    if (GUILayout.Button("<", GUILayout.Width(26))) _aLang = langs[(li + langs.Length - 1) % langs.Length];
+                    GUILayout.Label(langs[Mathf.Max(0, Array.IndexOf(langs, _aLang))], _title, GUILayout.Width(36));
+                    if (GUILayout.Button(">", GUILayout.Width(26))) _aLang = langs[(li + 1) % langs.Length];
+                }
+                GUILayout.Space(20);
+                GUILayout.Label("Max players:", _small, GUILayout.Width(90));
+                if (GUILayout.Button("-", GUILayout.Width(26)) && _aMax > 2) _aMax--;
+                GUILayout.Label(_aMax.ToString(), _title, GUILayout.Width(30));
+                if (GUILayout.Button("+", GUILayout.Width(26)) && _aMax < 32) _aMax++;
+                GUILayout.FlexibleSpace();
+                GUILayout.EndHorizontal();
+                _aPub = GUILayout.Toggle(_aPub, " Show the game in the public list");
+
+                GUILayout.BeginHorizontal();
+                GUILayout.Label("Player password:", _small, GUILayout.Width(120));
+                _aPw = Field(10, _aPw, 64, mask: _focus != 10);
+                if (st.hasPlayerPw && GUILayout.Button("Remove", GUILayout.Width(80))) { AdminChannel.Set("pp", ""); _aSynced = false; st.loaded = false; }
+                GUILayout.EndHorizontal();
+                GUILayout.Label("<size=10>" + (st.hasPlayerPw ? "A player password is set. Type a new one to change it, or Remove it to open the game to everyone." : "No player password: anyone can join. Type one to protect the game.") + "</size>", _small);
+                GUILayout.BeginHorizontal();
+                GUILayout.Label("Admin password:", _small, GUILayout.Width(120));
+                _aApw = Field(11, _aApw, 64, mask: _focus != 11);
+                GUILayout.EndHorizontal();
+                GUILayout.Label("<size=10>Leave empty to keep the current admin password.</size>", _small);
+
+                bool dirty = _aName != st.name || _aDesc != st.desc || _aMax != st.max || _aPub != st.publish || _aLang != st.lang
+                             || (_aPw ?? "").Trim().Length > 0 || (_aApw ?? "").Trim().Length > 0;
+                GUI.enabled = dirty;
+                if (GUILayout.Button("Apply changes", GUILayout.Height(30)))
+                {
+                    if (_aName != st.name) AdminChannel.Set("n", _aName);
+                    if (_aDesc != st.desc) AdminChannel.Set("d", _aDesc);
+                    if (_aMax != st.max) AdminChannel.Set("m", _aMax.ToString());
+                    if (_aPub != st.publish) AdminChannel.Set("pub", _aPub ? "1" : "0");
+                    if (_aLang != st.lang) AdminChannel.Set("l", _aLang);
+                    if ((_aPw ?? "").Trim().Length > 0) AdminChannel.Set("pp", _aPw.Trim());
+                    if ((_aApw ?? "").Trim().Length > 0) AdminChannel.Set("ap", _aApw.Trim());
+                    _aSynced = false; st.loaded = false;
+                }
+                GUI.enabled = true;
+            }
+            string res = AdminChannel.LastResult ?? "";
+            if (res.Length > 0) GUILayout.Label(res.StartsWith("! ") ? res.Substring(2) : res, res.StartsWith("! ") ? _bad : _good);
+
+            GUILayout.Space(8);
+            GUILayout.Label("Shared saves of this game", _title);
+            if ((AdminChannel.WorldsStatus ?? "").Length > 0) GUILayout.Label(AdminChannel.WorldsStatus, _small);
+            _aScroll = GUILayout.BeginScrollView(_aScroll, GUILayout.ExpandHeight(true));
+            foreach (var w in AdminChannel.Worlds)
+            {
+                GUILayout.BeginHorizontal(_box);
+                GUILayout.Label(Esc(w.name) + (w.day > 0 ? "  ·  Day " + w.day : ""), _small);
+                GUILayout.FlexibleSpace();
+                bool confirm = _aConfirmDel == w.id;
+                if (GUILayout.Button(confirm ? "Really delete?" : "Delete", GUILayout.Width(120)))
+                {
+                    if (confirm) { AdminChannel.DeleteWorld(w.id); _aConfirmDel = ""; }
+                    else _aConfirmDel = w.id;
+                }
+                GUILayout.EndHorizontal();
+            }
+            GUILayout.EndScrollView();
+            GUILayout.Label("<size=10>Deleted saves go to the server trash for 30 days.</size>", _small);
             GUI.DragWindow(new Rect(0, 0, 10000, 28));
         }
 
@@ -590,15 +741,15 @@ namespace BAMPServerBrowser
             if (pub != Cfg.publish) { Cfg.publish = pub; BrowserConfig.Save(); if (pub) _nextRegTry = 0; }
 
             GUILayout.BeginHorizontal();
-            GUILayout.Label("Name:", _small, GUILayout.Width(80));
+            GUILayout.Label("Name:", _small, GUILayout.Width(120));
             _editName = Field(2, _editName, 48);
             GUILayout.EndHorizontal();
             GUILayout.BeginHorizontal();
-            GUILayout.Label("Description:", _small, GUILayout.Width(80));
+            GUILayout.Label("Description:", _small, GUILayout.Width(120));
             _editDesc = Field(3, _editDesc, 120);
             GUILayout.EndHorizontal();
             GUILayout.BeginHorizontal();
-            GUILayout.Label("Language:", _small, GUILayout.Width(80));
+            GUILayout.Label("Language:", _small, GUILayout.Width(120));
             {
                 var langs = BrowserConfig.Languages;
                 int li = Mathf.Max(0, System.Array.IndexOf(langs, Cfg.language));
@@ -611,24 +762,31 @@ namespace BAMPServerBrowser
             GUILayout.FlexibleSpace();
             GUILayout.EndHorizontal();
             GUILayout.BeginHorizontal();
-            GUILayout.Label("Password:", _small, GUILayout.Width(80));
+            GUILayout.Label("Player password:", _small, GUILayout.Width(120));
             _editPw = Field(5, _editPw, 64, mask: _focus != 5);
             GUILayout.EndHorizontal();
-            GUILayout.Label("<size=10>" + (string.IsNullOrEmpty(Cfg.joinPassword) ? "No password: anyone can join." : "Password set: only players who know it can join.") + "</size>", _small);
+            GUILayout.Label("<size=10>" + (string.IsNullOrEmpty(Cfg.joinPassword) ? "Empty: anyone can join." : "Only players who know it can join. They also get your shared saves.") + "</size>", _small);
             GUILayout.BeginHorizontal();
-            GUILayout.Label("Max players:", _small, GUILayout.Width(80));
+            GUILayout.Label("Admin password:", _small, GUILayout.Width(120));
+            _editApw = Field(7, _editApw, 64, mask: _focus != 7);
+            GUILayout.EndHorizontal();
+            GUILayout.Label("<size=10>" + (string.IsNullOrEmpty(Cfg.adminPassword) ? "Empty: no admin. Set one to let a friend manage this game." : "Whoever joins with it can change these settings and delete shared saves.") + "</size>", _small);
+            GUILayout.BeginHorizontal();
+            GUILayout.Label("Max players:", _small, GUILayout.Width(120));
             if (GUILayout.Button("-", GUILayout.Width(26)) && Cfg.maxPlayers > 2) { Cfg.maxPlayers--; BrowserConfig.Save(); PushUpdateNow(); }
             GUILayout.Label(Cfg.maxPlayers.ToString(), _title, GUILayout.Width(30));
             if (GUILayout.Button("+", GUILayout.Width(26)) && Cfg.maxPlayers < 32) { Cfg.maxPlayers++; BrowserConfig.Save(); PushUpdateNow(); }
             GUILayout.FlexibleSpace();
-            bool dirty = _editName != Cfg.serverName || _editDesc != Cfg.description || (_editPw ?? "") != (Cfg.joinPassword ?? "");
+            bool dirty = _editName != Cfg.serverName || _editDesc != Cfg.description || (_editPw ?? "") != (Cfg.joinPassword ?? "") || (_editApw ?? "") != (Cfg.adminPassword ?? "");
             GUI.enabled = dirty;
             if (GUILayout.Button("Apply", GUILayout.Width(90)))
             {
                 Cfg.serverName = (_editName ?? "").Trim();
                 Cfg.description = (_editDesc ?? "").Trim();
                 Cfg.joinPassword = (_editPw ?? "").Trim();
+                Cfg.adminPassword = (_editApw ?? "").Trim();
                 _editPw = Cfg.joinPassword;
+                _editApw = Cfg.adminPassword;
                 BrowserConfig.Save();
                 PushUpdateNow();
             }
@@ -639,20 +797,11 @@ namespace BAMPServerBrowser
             GUILayout.Label(_hostStatus, ok ? _good : _small);
             if (WorldSync.Enabled)
             {
-                string code = Cfg.ShareCode(PublicIp());
-                GUILayout.BeginHorizontal();
-                string shown = code.Length == 0 ? "detecting public IP..." : _showShareCode ? code : "*********";
-                GUILayout.Label("<size=11>Shared-saves code for friends: <b>" + Esc(shown) + "</b></size>", _small);
-                GUI.enabled = code.Length > 0;
-                if (GUILayout.Button(_showShareCode ? "Hide" : "Show", GUILayout.Width(60))) _showShareCode = !_showShareCode;
-                if (GUILayout.Button("Copy", GUILayout.Width(60))) { try { GUIUtility.systemCopyBuffer = code; } catch { } }
-                GUI.enabled = true;
-                GUILayout.EndHorizontal();
-                if (Cfg.IsLocalStorageOwner)
-                    GUILayout.Label("<size=10>" + (LocalWorldStore.Running
-                        ? "Saves are stored on this PC: friends need TCP port " + Cfg.localStoragePort + " open on your router."
-                        : "Save server unavailable on port " + Cfg.localStoragePort + ": " + Esc(LocalWorldStore.LastError)) + "</size>",
-                        LocalWorldStore.LastError.Length > 0 ? _bad : _small);
+                GUILayout.Label("<size=11>Shared saves: " + Esc(_sync.Status) + "</size>", _small);
+                if (Cfg.IsLocalStorageOwner && !LocalWorldStore.Running && LocalWorldStore.LastError.Length > 0)
+                    GUILayout.Label("<size=10>Save server unavailable on port " + Cfg.localStoragePort + ": " + Esc(LocalWorldStore.LastError) + "</size>", _bad);
+                else if (Cfg.IsLocalStorageOwner)
+                    GUILayout.Label("<size=10>Saves are stored on this PC: friends need TCP port " + Cfg.localStoragePort + " open on your router to get them.</size>", _small);
             }
             if (WorldSync.Enabled)
                 GUILayout.Label("<size=11>Shared world: " + Esc(_sync.LastUpload.Length > 0 ? "last upload " + _sync.LastUpload : "uploaded after the next save") + "</size>", _small);
@@ -684,14 +833,15 @@ namespace BAMPServerBrowser
         private void TickTyping()
         {
             if (_focus == 0) return;
-            bool visible = ((_focus == 1 || _focus == 4 || _focus == 6) && _show) || ((_focus == 2 || _focus == 3 || _focus == 5) && ShowHostPanel);
+            bool visible = ((_focus == 1 || _focus == 6) && _show) || ((_focus == 2 || _focus == 3 || _focus == 5 || _focus == 7) && ShowHostPanel)
+                           || (_focus >= 8 && _focus <= 11 && _showAdmin);
             if (!visible) { _focus = 0; return; }
             if (Input.GetMouseButtonDown(0))
             {
                 // un clic hors du champ retire le focus (le clic sur un autre champ le redonne dans OnGUI)
                 var m = Input.mousePosition;
                 var p = new Vector2(m.x / _scale, (Screen.height - m.y) / _scale);
-                if (!((_show && _listRect.Contains(p)) || (ShowHostPanel && _hostRect.Contains(p)))) { _focus = 0; return; }
+                if (!((_show && _listRect.Contains(p)) || (ShowHostPanel && _hostRect.Contains(p)) || (_showAdmin && _adminRect.Contains(p)))) { _focus = 0; return; }
             }
             if (Input.GetKeyDown(KeyCode.Escape)) { _focus = 0; return; }
             string buf = _focusBuf;
@@ -715,11 +865,11 @@ namespace BAMPServerBrowser
         private void UpdateClickBlock()
         {
             bool over = false;
-            if (_show || ShowHostPanel)
+            if (_show || ShowHostPanel || _showAdmin)
             {
                 var m = Input.mousePosition;
                 var p = new Vector2(m.x / _scale, (Screen.height - m.y) / _scale);
-                over = (_show && _listRect.Contains(p)) || (ShowHostPanel && _hostRect.Contains(p));
+                over = (_show && _listRect.Contains(p)) || (ShowHostPanel && _hostRect.Contains(p)) || (_showAdmin && _adminRect.Contains(p));
             }
             SetBlock(over);
         }

@@ -18,6 +18,8 @@ namespace BAMPServerBrowser
         public string shareKey = "";
         /// <summary>Mot de passe pour rejoindre la partie que l'on héberge. Vide (défaut) = partie ouverte.</summary>
         public string joinPassword = "";
+        /// <summary>Mot de passe admin : qui rejoint avec peut changer les réglages de la partie et supprimer des sauvegardes partagées.</summary>
+        public string adminPassword = "";
         /// <summary>Clé admin du groupe (uniquement sur le PC de l'admin) : seule elle peut supprimer des mondes du serveur.</summary>
         public string adminKey = "";
         /// <summary>

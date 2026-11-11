@@ -1,7 +1,7 @@
 # BAMP Server Browser
 
 An add-on for **[Going Public: Multiplayer for Big Ambitions](https://steamcommunity.com/sharedfiles/filedetails/?id=3765662670)**
-that adds a **public server list**, **optional join passwords**, **shared world saves** (on the host's PC
+that adds a **public server list**, **optional player and admin passwords**, **shared world saves** (on the host's PC
 or on your own private VPS) and an **automatic headless host mode**.
 
 It is a separate mod: **it does not modify the game or the original multiplayer mod**. It reads the
@@ -15,10 +15,10 @@ methods in memory (Harmony, provided by the base mod) for the join password.
 | Feature | What it does |
 |---|---|
 | **Server list** | Every hosted game can be published to a public list. Players pick a game and click *Join* — no IP to type. Joins through the **Steam relay** by default (no port forwarding), or by IP:port. Games seen in the last 7 days stay listed when offline (green dot = online, grey = offline). Filter by language, *Online only*, search by name, and sort by status, name, day, players or language. |
-| **Publish panel** | While hosting: show/hide the game in the list, name, description, language, max players, password. The entry shows the language tag (e.g. **[FR]**), *Lobby* / *In game*, the in-game day, player count and mod version. |
-| **Join password** | Empty by default (anyone can join). When the host sets one, the game is marked **[password]** and the host refuses anyone without it. |
+| **Publish panel** | While hosting: show/hide the game in the list, name, description, language, max players, player password, admin password. The entry shows the language tag (e.g. **[FR]**), *Lobby* / *In game*, the in-game day, player count and mod version. |
+| **Player & admin passwords** | Both empty by default (anyone can join, no admin). With a **player password** the game is marked **[password]**, the password is asked right after clicking *Join*, and the host refuses anyone without it; players who give it automatically receive the host's shared saves. Whoever joins with the **admin password** gets a *Manage this game* window: change name, description, language, max players, passwords, public listing, and delete shared saves (the host executes; the group admin key never leaves the host's PC). |
 | **Shared world saves** | The latest version of each multiplayer world is kept on the group's save server, so any member can host the up-to-date world. Default: the host's own PC. Option: your own private VPS. |
-| **Shared code & admin key** | Created automatically. Only players with the shared-saves code can see the group's worlds; only the admin key can delete them. The shared code is not a game password. |
+| **Shared code & admin key** | Created automatically, nothing to type: the host hands its shared-saves code to players who join with a password. Only the host's admin key can delete saves. |
 | **Headless host** | Runs the game with no window and no sound, hosts automatically, accepts players, autosaves, and offers a console (`status`, `players`, `say`, `save`, `stop`). |
 
 ---
@@ -56,8 +56,10 @@ To uninstall, delete the `ModsLocal\BAMPServerBrowser` folder.
 ## How to use
 
 - **Join**: *Multiplayer > Join Game*. The server list opens next to the dialog.
-  Double-click a game or use *Join* (*Join by IP* if you prefer IP:port). Enter the password if the
-  game shows **[password]**.
+  Double-click a game or use *Join* (*Join by IP* if you prefer IP:port). If the game shows **[password]**,
+  the password is asked right after *Join* (player password, or admin password for admin rights). For an
+  open game, *Join as admin* asks for the admin password.
+- **Admin**: once connected with the admin password, press **F9** → *Manage this game*.
 - **Host**: *Host New Game* or *Host Saved Game*. The **Publish my game** panel appears in the lobby.
 - **F9**: show/hide the list at any time (joining needs the main menu).
 - Panels can be dragged by their title bar.
@@ -71,9 +73,9 @@ The public list server **stores no saves**; it only lists games. Each group choo
 ### Default — on the host's PC (nothing to install)
 
 - While the game runs, the host's PC serves the group's saves on **TCP port 8788**.
-- While hosting, the **Publish my game** panel shows the **shared-saves code for friends** (hidden until you
-  click *Show*), e.g. `groupe-1a2b3c4d5e6f7a8b@HOST_PUBLIC_IP:8788` (*Copy* button). Friends paste it in
-  **Shared code** (list window, *Shared saves with friends*) → *Save*.
+- Friends who join with the **player password** (or the admin password) receive the host's shared-saves
+  code automatically (`groupe-…@HOST_PUBLIC_IP:8788`); their saves then sync on their own. Games without a
+  player password never hand out the code. (The code can still be set by hand in `config.json`, `shareKey`.)
 - One-time setup on the host's router: **forward TCP 8788** to the host's PC, and allow Big Ambitions in
   the Windows firewall when asked.
 - When the host's PC is off, friends keep the copy they already have but cannot get a newer one.
@@ -128,7 +130,8 @@ If your hosting provider has its own firewall, open the port there as well. Chec
 | `masterUrl` | public list server | Server list address |
 | `publish` | `true` | Publish your hosted games in the list |
 | `serverName`, `description` | `""` | Shown in the list |
-| `joinPassword` | `""` | Password to join your hosted game (empty = open) |
+| `joinPassword` | `""` | Player password to join your hosted game (empty = open) |
+| `adminPassword` | `""` | Admin password: joining with it gives the *Manage this game* window (empty = no remote admin) |
 | `language` | system language | Language shown for your hosted game in the list (`EN`, `FR`, `DE`…) |
 | `maxPlayers` | `8` | Shown in the list |
 | `toggleKey` | `F9` | Show/hide the list |

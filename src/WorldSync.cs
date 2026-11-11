@@ -88,6 +88,19 @@ namespace BAMPServerBrowser
             }
         }
 
+        /// <summary>Liste des mondes du groupe (appel réseau bloquant ; null si injoignable).</summary>
+        public static List<RemoteWorld> ListRemoteWorlds()
+        {
+            try { return FetchRemote().Values.ToList(); } catch { return null; }
+        }
+
+        /// <summary>Met un monde du groupe à la corbeille du serveur (clé admin de ce PC ; appel bloquant).</summary>
+        public static int DeleteRemoteWorld(string id)
+        {
+            if (string.IsNullOrEmpty(id) || id.Length > 64 || !id.All(char.IsLetterOrDigit)) return 400;
+            try { return DeleteRemote(id); } catch { return 0; }
+        }
+
         private static int DeleteRemote(string id)
         {
             var r = Req("DELETE", "/api/worlds/" + id);
