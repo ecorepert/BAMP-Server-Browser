@@ -15,13 +15,17 @@ namespace BAMPServerBrowser
         public string toggleKey = "F9";
         public bool preferSteam = true;
         /// <summary>Code de groupe des mondes partagés (>= 6 caractères, identique pour tous les amis). Vide = désactivé.</summary>
-        public string shareKey = "";
+        [JsonIgnore] public string shareKey = "";
+        [JsonProperty("shareKey")] private string ShareKeyStored { get => SecretBox.Protect(shareKey); set => shareKey = SecretBox.Unprotect(value); }
         /// <summary>Mot de passe pour rejoindre la partie que l'on héberge. Vide (défaut) = partie ouverte.</summary>
-        public string joinPassword = "";
+        [JsonIgnore] public string joinPassword = "";
+        [JsonProperty("joinPassword")] private string JoinPasswordStored { get => SecretBox.Protect(joinPassword); set => joinPassword = SecretBox.Unprotect(value); }
         /// <summary>Mot de passe admin : qui rejoint avec peut changer les réglages de la partie et supprimer des sauvegardes partagées.</summary>
-        public string adminPassword = "";
+        [JsonIgnore] public string adminPassword = "";
+        [JsonProperty("adminPassword")] private string AdminPasswordStored { get => SecretBox.Protect(adminPassword); set => adminPassword = SecretBox.Unprotect(value); }
         /// <summary>Clé admin du groupe (uniquement sur le PC de l'admin) : seule elle peut supprimer des mondes du serveur.</summary>
-        public string adminKey = "";
+        [JsonIgnore] public string adminKey = "";
+        [JsonProperty("adminKey")] private string AdminKeyStored { get => SecretBox.Protect(adminKey); set => adminKey = SecretBox.Unprotect(value); }
         /// <summary>
         /// Serveur de sauvegarde externe (VPS) choisi par l'admin, ex. "http://1.2.3.4:8787".
         /// Vide (défaut) = le PC de l'hôte sert lui-même les sauvegardes (port localStoragePort),
@@ -34,7 +38,32 @@ namespace BAMPServerBrowser
         /// Mondes reçus en rejoignant la partie d'un ami (id du monde -> "code@hote:port" de cet ami).
         /// Ils ne se synchronisent qu'avec le serveur de cet ami ; tous les autres mondes restent dans notre groupe.
         /// </summary>
-        public System.Collections.Generic.Dictionary<string, string> joinedWorlds = new System.Collections.Generic.Dictionary<string, string>();
+        [JsonIgnore] public System.Collections.Generic.Dictionary<string, string> joinedWorlds = new System.Collections.Generic.Dictionary<string, string>();
+        [JsonProperty("joinedWorlds", ObjectCreationHandling = ObjectCreationHandling.Replace)]
+        private System.Collections.Generic.Dictionary<string, string> JoinedWorldsStored
+        {
+            get
+            {
+                var d = new System.Collections.Generic.Dictionary<string, string>();
+                foreach (var kv in joinedWorlds ?? new System.Collections.Generic.Dictionary<string, string>()) d[kv.Key] = SecretBox.Protect(kv.Value);
+                return d;
+            }
+            set
+            {
+                joinedWorlds = new System.Collections.Generic.Dictionary<string, string>();
+                foreach (var kv in value ?? new System.Collections.Generic.Dictionary<string, string>()) joinedWorlds[kv.Key] = SecretBox.Unprotect(kv.Value);
+            }
+        }
+        /// <summary>Parties favorites (clé "steam:id" ou "ip:adresse:port").</summary>
+        public System.Collections.Generic.List<string> favorites = new System.Collections.Generic.List<string>();
+        /// <summary>Notification quand une partie favorite passe en ligne.</summary>
+        public bool notifyFavorites = true;
+        /// <summary>Masquer les parties protégées par mot de passe dans la liste.</summary>
+        public bool listHidePassword;
+        /// <summary>N'afficher que les favoris.</summary>
+        public bool listFavoritesOnly;
+        /// <summary>Vérifier sur GitHub si une nouvelle version du mod existe.</summary>
+        public bool checkUpdates = true;
         /// <summary>Langue parlée sur la partie hébergée (code court, ex. "FR"). Vide = déduite de la langue du système.</summary>
         public string language = "";
         /// <summary>Préférences de la liste des parties.</summary>
@@ -164,6 +193,7 @@ namespace BAMPServerBrowser
                 else Current.language = Current.language.Trim().ToUpperInvariant();
                 Current.listLanguage = (Current.listLanguage ?? "").Trim().ToUpperInvariant();
                 if (Current.joinedWorlds == null) Current.joinedWorlds = new System.Collections.Generic.Dictionary<string, string>();
+                if (Current.favorites == null) Current.favorites = new System.Collections.Generic.List<string>();
                 if (Current.localStoragePort < 1024 || Current.localStoragePort > 65535) Current.localStoragePort = 8788;
                 Save();
             }

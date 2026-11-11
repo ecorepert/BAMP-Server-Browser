@@ -30,6 +30,11 @@ namespace BAMPServerBrowser
         public bool online = true;
         /// <summary>Identifiant du monde (playthrough) hébergé, vide si inconnu.</summary>
         public string worldId = "";
+        /// <summary>Résumé des réglages de difficulté.</summary>
+        public string rules = "";
+        /// <summary>Version de BAMP Server Browser de l'hôte.</summary>
+        public string bsbVersion = "";
+        public List<string> playerNames = new List<string>();
         /// <summary>Secondes depuis la dernière fois que la partie était en ligne (si hors ligne).</summary>
         public int offlineFor;
     }
@@ -63,6 +68,9 @@ namespace BAMPServerBrowser
         public int day;
         public string language;
         public string worldId;
+        public string rules;
+        public string bsbVersion;
+        public List<string> playerNames;
     }
 
     /// <summary>Appels HTTP vers le master server (thread de fond, résultat via callback).</summary>
@@ -84,7 +92,7 @@ namespace BAMPServerBrowser
                 req.Method = method;
                 req.Timeout = 6000;
                 req.ReadWriteTimeout = 6000;
-                req.UserAgent = "BAMPServerBrowser/1.0";
+                req.UserAgent = BuildInfo.UserAgent;
                 req.Accept = "application/json";
                 if (token != null) req.Headers["X-Token"] = token;
                 if (json != null)

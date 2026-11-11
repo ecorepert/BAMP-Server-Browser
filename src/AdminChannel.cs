@@ -45,7 +45,32 @@ namespace BAMPServerBrowser
         public static string JoinedHostName = "";
         public class RemoteSettings { public string name = "", desc = "", lang = ""; public int max; public bool hasPlayerPw, hasAdminPw, publish; public bool loaded; }
         public static RemoteSettings Settings = new RemoteSettings();
-        public class RemoteWorldInfo { public string id, name; public int day; }
+        public class RemoteWorldInfo { public string id, name; public int day; public bool deleted; public int daysLeft; }
+        public class RemotePlayer { public string id, name; public bool admin, host; }
+        public class RemoteBan { public string key, name; }
+        public static List<RemotePlayer> Players = new List<RemotePlayer>();
+        public static List<RemoteBan> Bans = new List<RemoteBan>();
+        public static string PlayersStatus = "";
+        private static List<RemotePlayer> _incomingPlayers;
+        private static List<RemoteBan> _incomingBans;
+        /// <summary>Message affiché au joueur expulsé par un admin.</summary>
+        public static string KickedNotice = "";
+        public const string KickTag = "BAMP:kicked";
+
+        /// <summary>
+        /// Mode local : l'hôte ouvre lui-même la fenêtre admin. Les demandes ne passent pas par le réseau,
+        /// elles sont traitées directement sur ce PC avec les mêmes règles.
+        /// </summary>
+        public const string LocalPid = "\u0001local";
+        public static bool LocalMode;
+
+        public static void EnterLocalMode()
+        {
+            ResetClient();
+            LocalMode = true;
+            HostPid = LocalPid;
+            IsAdmin = true;
+        }
         public static List<RemoteWorldInfo> Worlds = new List<RemoteWorldInfo>();
         public static string WorldsStatus = "";
         private static List<RemoteWorldInfo> _incoming;
@@ -119,6 +144,7 @@ namespace BAMPServerBrowser
 
         private static void SendTo(string pid, object payload)
         {
+            if (pid == LocalPid) { try { ClientReceive(LocalPid, JObject.FromObject(payload)); } catch (Exception ex) { ModEntry.Warn("[Admin] local: " + ex.Message); } return; }
             try
             {
                 string me = MPConfig.PlayerId ?? "";
@@ -173,6 +199,7 @@ namespace BAMPServerBrowser
 
         private static bool IsAdminPid(string pid)
         {
+            if (pid == LocalPid) return true;
             lock (PeersLock) return Peers.TryGetValue(pid ?? "", out var p) && p.Role == Role.Admin;
         }
 
@@ -185,7 +212,7 @@ namespace BAMPServerBrowser
             });
             SendTo(pid, new { t = "gd", d = Cfg.description ?? "" });
             string world = CurrentWorldId();
-            if (world.Length > 0 && !string.IsNullOrEmpty(Cfg.adminPassword))
+            if (pid != LocalPid && world.Length > 0 && !string.IsNullOrEmpty(Cfg.adminPassword))
             {
                 SendTo(pid, new { t = "rl", i = world, ah = RelaunchHash(world, Cfg.adminPassword) });
                 SendTo(pid, new { t = "rp", p = Cfg.joinPassword ?? "" });
@@ -219,7 +246,9 @@ namespace BAMPServerBrowser
         /// <summary>Ce qu'un admin garde sur son PC pour pouvoir relancer la partie quand l'hôte est hors ligne.</summary>
         public class RelaunchInfo
         {
-            public string worldId = "", adminHash = "", playerPassword = "";
+            public string worldId = "", adminHash = "";
+            [JsonIgnore] public string playerPassword = "";
+            [JsonProperty("playerPassword")] private string PlayerPasswordStored { get => SecretBox.Protect(playerPassword); set => playerPassword = SecretBox.Unprotect(value); }
             public string name = "", desc = "", lang = "", hostName = "";
             public int max = 8;
             public long savedAt;
@@ -304,6 +333,52 @@ namespace BAMPServerBrowser
                     SendTo(from, new { t = "r", ok = msg == null ? 1 : 0, m = msg ?? "Saved." });
                     break;
                 }
+                case "pl": SendPlayers(from); break;
+                case "kick": Reply(from, HostKick(from, (string)o["i"] ?? "", ban: false)); SendPlayers(from); break;
+                case "ban": Reply(from, HostKick(from, (string)o["i"] ?? "", ban: true)); SendPlayers(from); break;
+                case "unban":
+                {
+                    string key = (string)o["k"] ?? "";
+                    string res = "";
+                    try { res = MPServer.UnbanPlayer(key) ?? ""; } catch (Exception ex) { res = "! " + ex.Message; }
+                    ModEntry.Info($"[Admin] '{Who(from)}' unbanned '{key}'.");
+                    Reply(from, res.StartsWith("! ") ? res : "Player unbanned.");
+                    SendPlayers(from);
+                    break;
+                }
+                case "msg":
+                {
+                    string text = new string(((string)o["m"] ?? "").Where(c => !char.IsControl(c)).ToArray()).Trim();
+                    if (text.Length == 0) { Reply(from, "! Empty message."); break; }
+                    if (text.Length > 150) text = text.Substring(0, 150);
+                    try
+                    {
+                        MPServer.BroadcastChat(MPConfig.PlayerId, (from == LocalPid ? "[Host] " : "[Admin " + Who(from) + "] ") + text);
+                        Reply(from, "Message sent to everyone.");
+                    }
+                    catch (Exception ex) { Reply(from, "! Message not sent: " + ex.Message); }
+                    break;
+                }
+                case "save":
+                {
+                    bool lobby = true; try { lobby = MPServer.IsInLobby; } catch { }
+                    if (lobby) { Reply(from, "! The game has not started yet: nothing to save."); break; }
+                    try { MPSaveCoordinator.HostSaveNow("admin"); ModEntry.Info($"[Admin] '{Who(from)}' forced a save."); Reply(from, "Save requested: the game is being saved."); }
+                    catch (Exception ex) { Reply(from, "! Save failed: " + ex.Message); }
+                    break;
+                }
+                case "rs":
+                {
+                    string id = (string)o["i"] ?? "";
+                    ModEntry.Info($"[Admin] '{Who(from)}' restores shared save {id}.");
+                    Task.Run(() => WorldSync.RestoreRemoteWorld(id)).ContinueWith(task => Main.Enqueue(() =>
+                    {
+                        int st = task.IsFaulted ? 0 : task.Result;
+                        Reply(from, st == 200 ? "Save restored from the trash." : st == 410 ? "! This save is no longer in the trash." : "! Restore refused (" + (st == 0 ? "save server unreachable" : "HTTP " + st) + ").");
+                        SendWorldList(from);
+                    }));
+                    break;
+                }
                 case "del":
                 {
                     string id = (string)o["i"] ?? "";
@@ -318,6 +393,74 @@ namespace BAMPServerBrowser
                 }
             }
         }
+
+        private static void Reply(string pid, string msg)
+        {
+            bool bad = msg.StartsWith("! ");
+            SendTo(pid, new { t = "r", ok = bad ? 0 : 1, m = bad ? msg.Substring(2) : msg });
+        }
+
+        private static string Who(string pid)
+        {
+            if (pid == LocalPid) return "host";
+            try { return MPServer.DisplayNameFor(pid) ?? pid; } catch { return pid; }
+        }
+
+        private static readonly System.Reflection.MethodInfo PeerForPidM = AccessTools.Method(typeof(MPServer), "PeerForPid");
+
+        /// <summary>Expulse (et bannit si demandé) un joueur connecté. Renvoie le message à afficher ("! " = erreur).</summary>
+        private static string HostKick(string from, string target, bool ban)
+        {
+            string me = ""; try { me = MPConfig.PlayerId ?? ""; } catch { }
+            if (string.IsNullOrEmpty(target)) return "! No player selected.";
+            if (target == me) return "! The host can't be kicked.";
+            if (target == from) return "! You can't kick yourself.";
+            if (from != LocalPid && IsAdminPid(target)) return "! Only the host can kick another admin.";
+            bool connected = false;
+            try { connected = (MPServer.ConnectedClientPeers() ?? new List<(MPLink, string)>()).Any(x => x.Item2 == target); } catch { }
+            if (!connected && !ban) return "! This player is not connected anymore.";
+            string name = Who(target);
+            if (ban)
+            {
+                try { MPServer.BanPlayer(target); } catch (Exception ex) { return "! Ban failed: " + ex.Message; }
+            }
+            if (connected)
+            {
+                try
+                {
+                    bool lobby = true; try { lobby = MPServer.IsInLobby; } catch { }
+                    if (lobby) MPServer.KickFromLobby(target);
+                    else (PeerForPidM?.Invoke(null, new object[] { target }) as MPLink)?.Disconnect(Encoding.UTF8.GetBytes(KickTag));
+                }
+                catch (Exception ex) { return "! Kick failed: " + (ex.InnerException ?? ex).Message; }
+            }
+            ModEntry.Info($"[Admin] '{Who(from)}' {(ban ? "banned" : "kicked")} '{name}'.");
+            return (ban ? "Banned: " : "Kicked: ") + name + ".";
+        }
+
+        private static void SendPlayers(string pid)
+        {
+            string me = ""; try { me = MPConfig.PlayerId ?? ""; } catch { }
+            SendTo(pid, new { t = "p0" });
+            SendTo(pid, new { t = "pi", i = me, n = Short(Who(me), 32), a = 1, h = 1 });
+            try
+            {
+                foreach (var (_, p) in (MPServer.ConnectedClientPeers() ?? new List<(MPLink, string)>()).Take(32))
+                    if (!string.IsNullOrEmpty(p)) SendTo(pid, new { t = "pi", i = p, n = Short(Who(p), 32), a = IsAdminPid(p) ? 1 : 0, h = 0 });
+            }
+            catch { }
+            SendTo(pid, new { t = "p1" });
+            SendTo(pid, new { t = "b0" });
+            try
+            {
+                foreach (var b in (MPServer.BanList() ?? new List<MPConfig.BanRow>()).Take(30))
+                    SendTo(pid, new { t = "bi", k = Short(b.Key ?? b.Name ?? "", 64), n = Short(string.IsNullOrEmpty(b.Name) ? (b.Key ?? "?") : b.Name, 32) });
+            }
+            catch { }
+            SendTo(pid, new { t = "b1" });
+        }
+
+        private static string Short(string v, int n) => (v ?? "").Length > n ? v.Substring(0, n) : (v ?? "");
 
         private static string ApplySetting(string f, string v)
         {
@@ -346,8 +489,11 @@ namespace BAMPServerBrowser
             {
                 if (task.IsFaulted || task.Result == null) { SendTo(pid, new { t = "we", m = "Save server unreachable from the host." }); return; }
                 SendTo(pid, new { t = "w0" });
+                long now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
                 foreach (var w in task.Result.Where(w => !w.deleted).OrderByDescending(w => w.savedAt).Take(40))
-                    SendTo(pid, new { t = "wi", i = w.id, n = (w.name ?? "").Length > 40 ? w.name.Substring(0, 40) : (w.name ?? ""), d = w.worldDay });
+                    SendTo(pid, new { t = "wi", i = w.id, n = Short(w.name, 40), d = w.worldDay });
+                foreach (var w in task.Result.Where(w => w.deleted).OrderByDescending(w => w.deletedAt).Take(20))
+                    SendTo(pid, new { t = "wi", i = w.id, n = Short(w.name, 40), d = w.worldDay, x = 1, dl = Math.Max(0, 30 - (int)((now - w.deletedAt) / 86400)) });
                 SendTo(pid, new { t = "w1" });
             }));
         }
@@ -357,8 +503,9 @@ namespace BAMPServerBrowser
         // =====================================================================
         public static void ResetClient()
         {
-            IsAdmin = false; HostPid = ""; LastResult = ""; Settings = new RemoteSettings();
+            IsAdmin = false; HostPid = ""; LastResult = ""; Settings = new RemoteSettings(); LocalMode = false;
             Worlds = new List<RemoteWorldInfo>(); WorldsStatus = ""; _incoming = null;
+            Players = new List<RemotePlayer>(); Bans = new List<RemoteBan>(); PlayersStatus = ""; _incomingPlayers = null; _incomingBans = null;
         }
 
         private static void ClientReceive(string from, JObject o)
@@ -397,8 +544,14 @@ namespace BAMPServerBrowser
                     break;
                 case "r": LastResult = ((int?)o["ok"] == 1 ? "" : "! ") + ((string)o["m"] ?? ""); break;
                 case "w0": _incoming = new List<RemoteWorldInfo>(); WorldsStatus = "Loading..."; break;
-                case "wi": _incoming?.Add(new RemoteWorldInfo { id = (string)o["i"] ?? "", name = (string)o["n"] ?? "", day = (int?)o["d"] ?? 0 }); break;
+                case "wi": _incoming?.Add(new RemoteWorldInfo { id = (string)o["i"] ?? "", name = (string)o["n"] ?? "", day = (int?)o["d"] ?? 0, deleted = (int?)o["x"] == 1, daysLeft = (int?)o["dl"] ?? 0 }); break;
                 case "w1": Worlds = _incoming ?? new List<RemoteWorldInfo>(); _incoming = null; WorldsStatus = Worlds.Count == 0 ? "No shared saves." : ""; break;
+                case "p0": _incomingPlayers = new List<RemotePlayer>(); break;
+                case "pi": _incomingPlayers?.Add(new RemotePlayer { id = (string)o["i"] ?? "", name = (string)o["n"] ?? "", admin = (int?)o["a"] == 1, host = (int?)o["h"] == 1 }); break;
+                case "p1": Players = _incomingPlayers ?? new List<RemotePlayer>(); _incomingPlayers = null; PlayersStatus = ""; break;
+                case "b0": _incomingBans = new List<RemoteBan>(); break;
+                case "bi": _incomingBans?.Add(new RemoteBan { key = (string)o["k"] ?? "", name = (string)o["n"] ?? "" }); break;
+                case "b1": Bans = _incomingBans ?? new List<RemoteBan>(); _incomingBans = null; break;
                 case "we": WorldsStatus = (string)o["m"] ?? ""; break;
             }
         }
@@ -431,12 +584,27 @@ namespace BAMPServerBrowser
 
         private static void SendToHost(object payload)
         {
+            if (LocalMode)
+            {
+                bool hosting = false; try { hosting = MPServer.IsRunning; } catch { }
+                if (!hosting) { LastResult = "! You are not hosting anymore."; return; }
+                var o = JObject.FromObject(payload);
+                Main.Enqueue(() => HostReceive(LocalPid, o));
+                return;
+            }
             if (HostPid.Length == 0) return;
             try { MPClient.SendChat(Tag + JsonConvert.SerializeObject(payload, Formatting.None), HostPid); }
             catch (Exception ex) { ModEntry.Warn("[Admin] send to host: " + ex.Message); }
         }
 
-        public static void RequestAll() { WorldsStatus = "Loading..."; SendToHost(new { t = "get" }); }
+        public static void RequestAll() { WorldsStatus = "Loading..."; PlayersStatus = "Loading..."; SendToHost(new { t = "get" }); SendToHost(new { t = "pl" }); }
+        public static void RequestPlayers() { PlayersStatus = "Loading..."; SendToHost(new { t = "pl" }); }
+        public static void Kick(string pid) { LastResult = "Kicking..."; SendToHost(new { t = "kick", i = pid }); }
+        public static void Ban(string pid) { LastResult = "Banning..."; SendToHost(new { t = "ban", i = pid }); }
+        public static void Unban(string key) { LastResult = "Unbanning..."; SendToHost(new { t = "unban", k = key }); }
+        public static void Message(string text) { LastResult = "Sending..."; SendToHost(new { t = "msg", m = (text ?? "").Length > 150 ? text.Substring(0, 150) : (text ?? "") }); }
+        public static void SaveNow() { LastResult = "Saving..."; SendToHost(new { t = "save" }); }
+        public static void RestoreWorld(string id) { LastResult = "Restoring..."; SendToHost(new { t = "rs", i = id }); }
         public static void Set(string field, string value) { LastResult = "Sending..."; SendToHost(new { t = "set", f = field, v = value ?? "" }); }
         public static void DeleteWorld(string id) { LastResult = "Deleting..."; SendToHost(new { t = "del", i = id }); }
     }

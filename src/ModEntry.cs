@@ -27,7 +27,7 @@ namespace BAMPServerBrowser
             JoinPassword.Install();
             AdminChannel.Install();
             if (DedicatedHost.Requested) _host.AddComponent<DedicatedHost>();
-            Info("loaded v1.0.0 - master " + BrowserConfig.Current.masterUrl);
+            Info("loaded v" + BuildInfo.Short + " - master " + BrowserConfig.Current.masterUrl);
             return Task.CompletedTask;
         }
 

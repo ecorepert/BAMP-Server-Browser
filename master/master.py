@@ -19,6 +19,7 @@ Mondes partages (header X-Share-Key = code de groupe, >= 6 caracteres) :
   ensuite seule cette cle peut supprimer. Les membres (code de groupe seul) envoient/recoivent.
   DELETE /api/worlds/<id>           -> (admin) met le monde a la corbeille (meta "deleted"); un PUT plus
                                        recent que la suppression le restaure ; purge apres 30 jours
+  POST   /api/worlds/<id>/restore   -> (admin) sort le monde de la corbeille
 """
 import hashlib
 import json
@@ -78,7 +79,7 @@ MAX_OFFLINE = 300
 OFFLINE_FILE = os.environ.get("BAMP_OFFLINE_FILE") or os.path.join(os.environ.get("STATE_DIRECTORY", "/var/lib/bamp-master"), "offline.json")
 _offline = {}       # cle -> dict public (sans token / ip)
 _PUBLIC_KEYS = ("name", "hostName", "description", "port", "steamId", "players", "maxPlayers", "inLobby",
-                "modVersion", "gameVersion", "hasPassword", "day", "language", "worldId")
+                "modVersion", "gameVersion", "hasPassword", "day", "language", "worldId", "rules", "bsbVersion")
 
 
 def _server_key(s):
@@ -134,6 +135,19 @@ def _clean_int(v, lo, hi, default=0):
     return max(lo, min(hi, v))
 
 
+def _clean_names(v):
+    if not isinstance(v, list):
+        return []
+    out = []
+    for n in v[:64]:
+        n = _clean_str(n, 24)
+        if n:
+            out.append(n)
+            if len(out) >= 16:
+                break
+    return out
+
+
 def _fields(body):
     steam_id = _clean_str(body.get("steamId"), 20)
     if steam_id and not (steam_id.isdigit() and len(steam_id) == 17):
@@ -153,6 +167,9 @@ def _fields(body):
         "day": _clean_int(body.get("day"), 0, 1000000, 0),
         "language": "".join(c for c in _clean_str(body.get("language"), 8).upper() if c.isalpha()),
         "worldId": "".join(c for c in _clean_str(body.get("worldId"), 64) if c.isalnum()),
+        "rules": _clean_str(body.get("rules"), 300),
+        "bsbVersion": _clean_str(body.get("bsbVersion"), 24),
+        "playerNames": _clean_names(body.get("playerNames")),
     }
 
 
@@ -180,7 +197,7 @@ def _public(s, now):
 
 def _public_offline(s, now):
     out = {k: s.get(k) for k in _PUBLIC_KEYS}
-    out.update(id="", ip="", age=0, online=False, offlineFor=int(now - s["lastSeen"]))
+    out.update(id="", ip="", age=0, online=False, offlineFor=int(now - s["lastSeen"]), playerNames=[])
     return out
 
 
@@ -397,6 +414,9 @@ class Handler(BaseHTTPRequestHandler):
         path = self.path.split("?")[0].rstrip("/")
         ip = self._ip()
         now = time.time()
+        parts = path.strip("/").split("/")
+        if len(parts) == 4 and parts[0] == "api" and parts[1] == "worlds" and parts[3] == "restore":
+            return self._restore_world(parts[2])
         if path == "/api/servers":
             f = _fields(body)
             if f["port"] == 0 and not f["steamId"]:
@@ -490,6 +510,36 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_OPTIONS(self):
         self._send(405, {"error": "method not allowed"})
+
+    def _restore_world(self, wid):
+        if not WORLDS_ENABLED:
+            return self._send(404, {"error": "world storage disabled on this server"})
+        if not wid or not _ID_RE.match(wid):
+            return self._send(404, {"error": "not found"})
+        if not _rate_ok(self._ip()):
+            return self._send(429, {"error": "too many requests"})
+        g = _group_dir(self.headers.get("X-Share-Key", ""))
+        if not g:
+            return self._send(403, {"error": "share key required (>= 6 chars)"})
+        has_admin, is_admin = _admin_state(g, self.headers.get("X-Admin-Key", ""))
+        if not is_admin:
+            return self._send(403, {"error": "admin key required to restore"})
+        d = os.path.join(g, wid)
+        with _wlock:
+            m = _read_meta(d)
+            if not m:
+                return self._send(404, {"error": "unknown world"})
+            if m.get("deleted"):
+                v = os.path.join(d, "v%d.bin" % m.get("savedAt", 0))
+                if not os.path.isfile(v):
+                    return self._send(410, {"error": "backup no longer available"})
+                shutil.move(v, os.path.join(d, "current.bin"))
+                m["deleted"] = False
+                m.pop("deletedAt", None)
+                m.pop("deletedBy", None)
+                with open(os.path.join(d, "meta.json"), "w", encoding="utf-8") as fh:
+                    json.dump(m, fh)
+        return self._send(200, {"ok": True})
 
     def do_DELETE(self):
         wid = self._world_route()

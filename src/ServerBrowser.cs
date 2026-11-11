@@ -41,8 +41,8 @@ namespace BAMPServerBrowser
 
         // ---------- UI ----------
         private float _scale = 1f;
-        private Rect _listRect = new Rect(20, 90, 640, 800);
-        private Rect _hostRect = new Rect(20, 230, 480, 470);
+        private Rect _listRect = new Rect(20, 90, 700, 840);
+        private Rect _hostRect = new Rect(20, 230, 480, 510);
         private bool _hostRectPlaced;
         private bool _styles;
         private GUIStyle _win, _row, _rowSel, _small, _title, _bad, _good, _box;
@@ -86,6 +86,7 @@ namespace BAMPServerBrowser
         }
 
         private float _nextAdminTick;
+        private bool _updateToasted;
         private bool _wasHostingAdmin;
 
         private void Update()
@@ -97,11 +98,34 @@ namespace BAMPServerBrowser
                 var refused = _servers.FirstOrDefault(x => Key(x) == _selectedId);
                 if (refused != null) { OpenPasswordPrompt(refused, admin: false, ip: false); JoinPassword.LastRefused = true; _show = true; }
             }
+            UpdateCheck.Start();
+            if (UpdateCheck.NewVersion.Length > 0 && !_updateToasted && Bridge.InMainMenu)
+            {
+                _updateToasted = true;
+                Toast($"New version {UpdateCheck.NewVersion} of BAMP Server Browser is available (you have {BuildInfo.Short}).", "Download page", () => Application.OpenURL(UpdateCheck.RepoUrl));
+            }
+            if (Cfg.notifyFavorites && Cfg.favorites.Count > 0 && !_fetching && !_favPolling && Time.unscaledTime >= _nextFavPoll)
+            {
+                _nextFavPoll = Time.unscaledTime + 60f;
+                _favPolling = true;
+                MasterClient.FetchAsync().ContinueWith(t => _main.Enqueue(() =>
+                {
+                    _favPolling = false;
+                    var (fl, _) = t.Result;
+                    if (fl != null) CheckFavorites(fl);
+                }));
+            }
+            _toasts.RemoveAll(t => Time.unscaledTime > t.Until);
+            TickPing();
             bool hostingNow = Hosting;
             if (hostingNow && Time.unscaledTime >= _nextAdminTick) { _nextAdminTick = Time.unscaledTime + 1f; AdminChannel.TickHost(); }
             if (!hostingNow && _wasHostingAdmin) AdminChannel.ResetHost();
             _wasHostingAdmin = hostingNow;
-            if (_showAdmin) { bool c = false; try { c = MPClient.IsConnected; } catch { } if (!c || !AdminChannel.IsAdmin) _showAdmin = false; }
+            if (_showAdmin)
+            {
+                if (AdminChannel.LocalMode) { if (!hostingNow) { _showAdmin = false; AdminChannel.ResetClient(); } }
+                else { bool c = false; try { c = MPClient.IsConnected; } catch { } if (!c || !AdminChannel.IsAdmin) _showAdmin = false; }
+            }
 
             if (Input.GetKeyDown(Cfg.ToggleKeyCode))
             {
@@ -166,6 +190,9 @@ namespace BAMPServerBrowser
                 day = day,
                 language = Cfg.language ?? "",
                 worldId = world,
+                rules = GameInfo.RulesSummary(),
+                bsbVersion = BuildInfo.Short,
+                playerNames = GameInfo.PlayerNames(),
             };
         }
 
@@ -285,6 +312,7 @@ namespace BAMPServerBrowser
                 if (list == null) { _listStatus = "List unreachable: " + err; return; }
                 _servers = list;
                 _listStatus = "";
+                CheckFavorites(list);
             }));
         }
 
@@ -385,7 +413,7 @@ namespace BAMPServerBrowser
 
         private void OnGUI()
         {
-            if (!_show && !ShowHostPanel && !_showAdmin) return;
+            if (!_show && !ShowHostPanel && !_showAdmin && _toasts.Count == 0) return;
             InitStyles();
             _scale = Mathf.Max(0.5f, Screen.height / 1080f);
             GUI.matrix = Matrix4x4.TRS(Vector3.zero, Quaternion.identity, new Vector3(_scale, _scale, 1f));
@@ -400,7 +428,8 @@ namespace BAMPServerBrowser
 
             if (_show) _listRect = Clamp(GUI.Window(0x42A1, _listRect, DrawList, "Open multiplayer games", _win), vw, vh);
             if (ShowHostPanel) _hostRect = Clamp(GUI.Window(0x42A2, _hostRect, DrawHost, "Publish my game", _win), vw, vh);
-            if (_showAdmin) _adminRect = Clamp(GUI.Window(0x42A3, _adminRect, DrawAdmin, "Manage this game (admin)", _win), vw, vh);
+            if (_showAdmin) _adminRect = Clamp(GUI.Window(0x42A3, _adminRect, DrawAdmin, AdminChannel.LocalMode ? "Players & tools (host)" : "Manage this game (admin)", _win), vw, vh);
+            if (_toasts.Count > 0) DrawToasts(vw);
 
             if (Event.current.type == EventType.MouseUp &&
                 (_hostRect.x != Cfg.hostPanelX || _hostRect.y != Cfg.hostPanelY || _listRect.x != Cfg.listPanelX || _listRect.y != Cfg.listPanelY))
@@ -416,6 +445,101 @@ namespace BAMPServerBrowser
             r.x = Mathf.Clamp(r.x, 0, Mathf.Max(0, vw - r.width));
             r.y = Mathf.Clamp(r.y, 0, Mathf.Max(0, vh - r.height));
             return r;
+        }
+
+        // ---------- favoris / notifications / ping ----------
+        private static string FavKey(ServerEntry s) => !string.IsNullOrEmpty(s.steamId) ? "steam:" + s.steamId : "ip:" + (s.ip ?? "") + ":" + s.port;
+        private bool IsFav(ServerEntry s) => Cfg.favorites.Contains(FavKey(s));
+        private void ToggleFav(ServerEntry s)
+        {
+            string k = FavKey(s);
+            if (!Cfg.favorites.Remove(k)) Cfg.favorites.Add(k);
+            BrowserConfig.Save();
+        }
+
+        private HashSet<string> _favOnline;
+        private float _nextFavPoll = 20f;
+        private bool _favPolling;
+
+        /// <summary>Compare avec le dernier état connu et prévient quand une partie favorite passe en ligne.</summary>
+        private void CheckFavorites(List<ServerEntry> list)
+        {
+            string own = OwnSteamId();
+            var onlineNow = new HashSet<string>(list.Where(x => x.online && IsFav(x)).Select(FavKey));
+            if (_favOnline != null && Cfg.notifyFavorites)
+                foreach (var x in list.Where(x => x.online && IsFav(x) && !_favOnline.Contains(FavKey(x)) && (own.Length == 0 || x.steamId != own)))
+                {
+                    var target = x;
+                    Toast($"Favorite game online: {target.name} ({target.hostName})", "Show", () => { _show = true; _selectedId = Key(target); Refresh(); });
+                }
+            _favOnline = onlineNow;
+        }
+
+        private class ToastMsg { public string Text, Action; public Action OnAction; public float Until; }
+        private readonly List<ToastMsg> _toasts = new List<ToastMsg>();
+        private void Toast(string text, string action = null, Action onAction = null)
+        {
+            _toasts.Add(new ToastMsg { Text = text, Action = action, OnAction = onAction, Until = Time.unscaledTime + 12f });
+            while (_toasts.Count > 3) _toasts.RemoveAt(0);
+        }
+
+        private Rect ToastRect(int i, float vw) => new Rect(vw - 400, 20 + i * 84, 380, 76);
+
+        private void DrawToasts(float vw)
+        {
+            for (int i = 0; i < _toasts.Count; i++)
+            {
+                var t = _toasts[i];
+                int idx = i;
+                GUI.Window(0x42B0 + i, ToastRect(i, vw), _ =>
+                {
+                    GUILayout.Label(Esc(t.Text), _small);
+                    GUILayout.BeginHorizontal();
+                    GUILayout.FlexibleSpace();
+                    if (t.Action != null && GUILayout.Button(t.Action, GUILayout.Width(150))) { try { t.OnAction?.Invoke(); } catch { } t.Until = 0; }
+                    if (GUILayout.Button("Close", GUILayout.Width(70))) t.Until = 0;
+                    GUILayout.EndHorizontal();
+                }, "BAMP Server Browser", _win);
+            }
+        }
+
+        // ping : clé de la partie -> (ms, moment de la mesure) ; ms : -1 pas de réponse, -2 en cours, -3 impossible
+        private readonly Dictionary<string, (int ms, float at)> _ping = new Dictionary<string, (int, float)>();
+        private UnityEngine.Ping _pingObj;
+        private string _pingKey = "";
+        private float _pingStarted;
+
+        /// <summary>Mesure le ping de la partie sélectionnée (toutes les 10 s, une mesure à la fois).</summary>
+        private void TickPing()
+        {
+            float now = Time.unscaledTime;
+            if (_pingObj != null)
+            {
+                bool done = false; int ms = -1;
+                try { done = _pingObj.isDone; if (done) ms = _pingObj.time; } catch { done = true; ms = -3; }
+                if (!done && now - _pingStarted > 2f) { done = true; ms = -1; }
+                if (!done) return;
+                _ping[_pingKey] = (ms < 0 ? (ms == -3 ? -3 : -1) : ms, now);
+                try { _pingObj.DestroyPing(); } catch { }
+                _pingObj = null;
+            }
+            if (!_show) return;
+            var cur = _servers.FirstOrDefault(x => Key(x) == _selectedId);
+            if (cur == null || !cur.online || string.IsNullOrEmpty(cur.ip) || !System.Net.IPAddress.TryParse(cur.ip, out var addr) || addr.AddressFamily != System.Net.Sockets.AddressFamily.InterNetwork) return;
+            string k = Key(cur);
+            if (_ping.TryGetValue(k, out var v) && now - v.at < 10f) return;
+            try { _pingObj = new UnityEngine.Ping(cur.ip); _pingKey = k; _pingStarted = now; if (!_ping.ContainsKey(k)) _ping[k] = (-2, now); }
+            catch { _ping[k] = (-3, now); _pingObj = null; }
+        }
+
+        private string PingText(ServerEntry s)
+        {
+            if (string.IsNullOrEmpty(s.ip)) return "Ping: not measured (Steam connection)";
+            if (!_ping.TryGetValue(Key(s), out var v) || v.ms == -2) return "Ping: measuring...";
+            if (v.ms == -1) return "Ping: no answer (the host's router blocks ping)";
+            if (v.ms == -3) return "Ping: not available";
+            string col = v.ms < 60 ? "#4cd964" : v.ms < 150 ? "#ffd24a" : "#ff7a70";
+            return $"Ping: <color={col}>{v.ms} ms</color>";
         }
 
         // ---------- filtres / tri de la liste ----------
@@ -447,6 +571,8 @@ namespace BAMPServerBrowser
         {
             IEnumerable<ServerEntry> rows = _servers;
             if (Cfg.listOnlineOnly) rows = rows.Where(s => s.online);
+            if (Cfg.listHidePassword) rows = rows.Where(s => !s.hasPassword);
+            if (Cfg.listFavoritesOnly) rows = rows.Where(s => IsFav(s));
             if (!string.IsNullOrEmpty(Cfg.listLanguage)) rows = rows.Where(s => string.Equals(s.language, Cfg.listLanguage, StringComparison.OrdinalIgnoreCase));
             if (!string.IsNullOrWhiteSpace(_filter))
             {
@@ -463,7 +589,7 @@ namespace BAMPServerBrowser
                 case 3: o = desc ? rows.OrderByDescending(s => s.players) : rows.OrderBy(s => s.players); break;
                 case 4: o = desc ? rows.OrderByDescending(s => n(s.language)) : rows.OrderBy(s => n(s.language)); break;
                 default:
-                    o = rows.OrderBy(s => s.online ? 0 : 1);
+                    o = rows.OrderBy(s => s.online ? 0 : 1).ThenBy(s => IsFav(s) ? 0 : 1);
                     o = desc ? o.ThenByDescending(s => s.players) : o.ThenBy(s => s.players);
                     o = o.ThenBy(s => s.offlineFor);
                     break;
@@ -473,6 +599,20 @@ namespace BAMPServerBrowser
 
         private void DrawList(int id)
         {
+            if (UpdateCheck.NewVersion.Length > 0)
+            {
+                GUILayout.BeginHorizontal(_box);
+                GUILayout.Label($"<color=#ffd24a>New version {UpdateCheck.NewVersion} available</color> (you have {BuildInfo.Short})." + (UpdateCheck.Notes.Length > 0 ? " " + Esc(UpdateCheck.Notes) : ""), _small);
+                if (GUILayout.Button("Download page", GUILayout.Width(130))) Application.OpenURL(UpdateCheck.RepoUrl);
+                GUILayout.EndHorizontal();
+            }
+            if ((AdminChannel.KickedNotice ?? "").Length > 0)
+            {
+                GUILayout.BeginHorizontal(_box);
+                GUILayout.Label(AdminChannel.KickedNotice, _bad);
+                if (GUILayout.Button("OK", GUILayout.Width(50))) AdminChannel.KickedNotice = "";
+                GUILayout.EndHorizontal();
+            }
             // ---- ligne 1 : recherche ----
             GUILayout.BeginHorizontal();
             GUILayout.Label("Search name:", _small, GUILayout.Width(95));
@@ -500,6 +640,19 @@ namespace BAMPServerBrowser
             if (GUILayout.Button(SortDirLabel(), GUILayout.Width(120))) { Cfg.listSortDesc = !Cfg.listSortDesc; BrowserConfig.Save(); }
             bool oo = GUILayout.Toggle(Cfg.listOnlineOnly, " Online only");
             if (oo != Cfg.listOnlineOnly) { Cfg.listOnlineOnly = oo; BrowserConfig.Save(); }
+            GUILayout.FlexibleSpace();
+            GUILayout.EndHorizontal();
+
+            // ---- ligne 3 : favoris / mot de passe
+            GUILayout.BeginHorizontal();
+            bool fo = GUILayout.Toggle(Cfg.listFavoritesOnly, " Favorites only");
+            if (fo != Cfg.listFavoritesOnly) { Cfg.listFavoritesOnly = fo; BrowserConfig.Save(); }
+            GUILayout.Space(14);
+            bool hp = GUILayout.Toggle(Cfg.listHidePassword, " Hide games with a password");
+            if (hp != Cfg.listHidePassword) { Cfg.listHidePassword = hp; BrowserConfig.Save(); }
+            GUILayout.Space(14);
+            bool nf = GUILayout.Toggle(Cfg.notifyFavorites, " Notify me when a favorite comes online");
+            if (nf != Cfg.notifyFavorites) { Cfg.notifyFavorites = nf; BrowserConfig.Save(); }
             GUILayout.FlexibleSpace();
             GUILayout.EndHorizontal();
 
@@ -532,7 +685,8 @@ namespace BAMPServerBrowser
                 else line2 = $"<color=#9aa3ad>{Esc(s.hostName)}  ·  Offline, last seen {Ago(s.offlineFor)}{dayTxt}</color>"
                              + (AdminChannel.GetRelaunch(s.worldId) != null ? "  ·  <color=#8fc3ff>you can relaunch it (admin)</color>" : "");
                 string name = s.online ? $"<b>{Esc(s.name)}</b>" : $"<b><color=#b8c0cc>{Esc(s.name)}</color></b>";
-                string label = $"{lang}{name}{(s.hasPassword ? "  <color=#ffd24a>[password]</color>" : "")}{(mine ? "  <color=#9ab>(you)</color>" : "")}\n<size=11>{line2}</size>";
+                string favTag = IsFav(s) ? "<color=#ffd24a>FAV</color> " : "";
+                string label = $"{favTag}{lang}{name}{(s.hasPassword ? "  <color=#ffd24a>[password]</color>" : "")}{(mine ? "  <color=#9ab>(you)</color>" : "")}\n<size=11>{line2}</size>";
                 if (GUILayout.Button(label, sel ? _rowSel : _row, GUILayout.Height(44)))
                 {
                     if (sel && Event.current.clickCount >= 2 && s.online) Join(s, false);
@@ -553,9 +707,23 @@ namespace BAMPServerBrowser
             if (cur == null) GUILayout.Label("Select a game in the list to join it.", _small);
             else
             {
+                GUILayout.BeginHorizontal();
                 GUILayout.Label((cur.online ? "<color=#4cd964>Online</color>" : "<color=#9aa3ad>Offline</color>") + "  " + Esc(cur.name) +
                                 (string.IsNullOrEmpty(cur.language) ? "" : "  ·  " + Esc(cur.language)) + (cur.day > 0 ? "  ·  Day " + cur.day : ""), _title);
+                GUILayout.FlexibleSpace();
+                if (GUILayout.Button(IsFav(cur) ? "Remove favorite" : "Add to favorites", GUILayout.Width(140))) ToggleFav(cur);
+                GUILayout.EndHorizontal();
                 if (!string.IsNullOrEmpty(cur.description)) GUILayout.Label(Esc(cur.description), _small);
+                if (!string.IsNullOrEmpty(cur.rules)) GUILayout.Label("<b>Settings:</b> " + Esc(cur.rules), _small);
+                if (cur.online)
+                {
+                    var names = cur.playerNames ?? new List<string>();
+                    GUILayout.Label("<b>Players:</b> " + (names.Count > 0 ? Esc(string.Join(", ", names)) : cur.players + " connected") + "    " + PingText(cur), _small);
+                    if (string.IsNullOrEmpty(cur.bsbVersion))
+                        GUILayout.Label("<size=11>The host has an older version of BAMP Server Browser: shared saves and admin tools may not work.</size>", _bad);
+                    else if (cur.bsbVersion != BuildInfo.Short)
+                        GUILayout.Label($"<size=11>The host uses BAMP Server Browser v{Esc(cur.bsbVersion)}, you have v{BuildInfo.Short}. Use the same version to avoid problems.</size>", _bad);
+                }
                 if (!cur.online)
                 {
                     string who = string.IsNullOrEmpty(cur.hostName) ? "the host" : Esc(cur.hostName);
@@ -739,12 +907,11 @@ namespace BAMPServerBrowser
         //  Fenêtre admin (joueur connecté avec le mot de passe admin)
         // =====================================================================
         private bool _showAdmin;
-        private Rect _adminRect = new Rect(680, 90, 480, 600);
+        private Rect _adminRect = new Rect(680, 90, 500, 780);
         private string _aName = "", _aDesc = "", _aPw = "", _aApw = "", _aLang = "";
         private int _aMax = 8;
         private bool _aPub = true, _aSynced;
         private string _aConfirmDel = "";
-        private Vector2 _aScroll;
 
         private void OpenAdmin()
         {
@@ -754,17 +921,67 @@ namespace BAMPServerBrowser
             AdminChannel.RequestAll();
         }
 
+        private string _aMsg = "";
+        private string _aConfirmBan = "";
+        private Vector2 _aOuter;
+
         private void DrawAdmin(int id)
         {
             var st = AdminChannel.Settings;
             GUILayout.BeginHorizontal();
-            GUILayout.Label("Changes are applied by the host right away.", _small);
+            GUILayout.Label(AdminChannel.LocalMode ? "Your game: changes apply right away." : "Changes are applied by the host right away.", _small);
             GUILayout.FlexibleSpace();
             if (GUILayout.Button("Reload", GUILayout.Width(80))) OpenAdmin();
-            if (GUILayout.Button("X", GUILayout.Width(28))) _showAdmin = false;
+            if (GUILayout.Button("X", GUILayout.Width(28))) { _showAdmin = false; if (AdminChannel.LocalMode) AdminChannel.ResetClient(); }
             GUILayout.EndHorizontal();
+            string res = AdminChannel.LastResult ?? "";
+            if (res.Length > 0) GUILayout.Label(res.StartsWith("! ") ? res.Substring(2) : res, res.StartsWith("! ") ? _bad : _good);
 
-            if (!st.loaded && !_aSynced) { GUILayout.Label("Loading the game settings from the host...", _small); }
+            _aOuter = GUILayout.BeginScrollView(_aOuter, GUILayout.ExpandHeight(true));
+
+            // ---------------- joueurs
+            GUILayout.Label("Players", _title);
+            if ((AdminChannel.PlayersStatus ?? "").Length > 0) GUILayout.Label(AdminChannel.PlayersStatus, _small);
+            foreach (var p in AdminChannel.Players)
+            {
+                GUILayout.BeginHorizontal(_box);
+                GUILayout.Label(Esc(p.name) + (p.host ? "  <color=#8fc3ff>[host]</color>" : p.admin ? "  <color=#4cd964>[admin]</color>" : ""), _small);
+                GUILayout.FlexibleSpace();
+                bool canAct = !p.host && (AdminChannel.LocalMode || !p.admin);
+                GUI.enabled = canAct;
+                if (GUILayout.Button("Kick", GUILayout.Width(70))) AdminChannel.Kick(p.id);
+                bool confirm = _aConfirmBan == p.id;
+                if (GUILayout.Button(confirm ? "Really ban?" : "Ban", GUILayout.Width(100)))
+                {
+                    if (confirm) { AdminChannel.Ban(p.id); _aConfirmBan = ""; } else _aConfirmBan = p.id;
+                }
+                GUI.enabled = true;
+                GUILayout.EndHorizontal();
+            }
+            if (AdminChannel.Bans.Count > 0)
+            {
+                GUILayout.Label("<size=11>Banned players</size>", _small);
+                foreach (var b in AdminChannel.Bans)
+                {
+                    GUILayout.BeginHorizontal();
+                    GUILayout.Label("  " + Esc(b.name), _small);
+                    GUILayout.FlexibleSpace();
+                    if (GUILayout.Button("Unban", GUILayout.Width(80))) AdminChannel.Unban(b.key);
+                    GUILayout.EndHorizontal();
+                }
+            }
+            GUILayout.BeginHorizontal();
+            GUILayout.Label("Message:", _small, GUILayout.Width(120));
+            _aMsg = Field(12, _aMsg, 150);
+            GUI.enabled = (_aMsg ?? "").Trim().Length > 0;
+            if (GUILayout.Button("Send to all", GUILayout.Width(100))) { AdminChannel.Message(_aMsg.Trim()); _aMsg = ""; _focus = 0; }
+            GUI.enabled = true;
+            GUILayout.EndHorizontal();
+            if (GUILayout.Button("Save the game now", GUILayout.Height(28))) AdminChannel.SaveNow();
+
+            // ---------------- réglages
+            GUILayout.Space(8);
+            if (!st.loaded && !_aSynced) { GUILayout.Label("Loading the game settings...", _small); }
             else
             {
                 if (st.loaded && !_aSynced)
@@ -822,14 +1039,12 @@ namespace BAMPServerBrowser
                 }
                 GUI.enabled = true;
             }
-            string res = AdminChannel.LastResult ?? "";
-            if (res.Length > 0) GUILayout.Label(res.StartsWith("! ") ? res.Substring(2) : res, res.StartsWith("! ") ? _bad : _good);
 
+            // ---------------- sauvegardes partagées + corbeille
             GUILayout.Space(8);
             GUILayout.Label("Shared saves of this game", _title);
             if ((AdminChannel.WorldsStatus ?? "").Length > 0) GUILayout.Label(AdminChannel.WorldsStatus, _small);
-            _aScroll = GUILayout.BeginScrollView(_aScroll, GUILayout.ExpandHeight(true));
-            foreach (var w in AdminChannel.Worlds)
+            foreach (var w in AdminChannel.Worlds.Where(x => !x.deleted))
             {
                 GUILayout.BeginHorizontal(_box);
                 GUILayout.Label(Esc(w.name) + (w.day > 0 ? "  ·  Day " + w.day : ""), _small);
@@ -842,8 +1057,21 @@ namespace BAMPServerBrowser
                 }
                 GUILayout.EndHorizontal();
             }
+            var trash = AdminChannel.Worlds.Where(x => x.deleted).ToList();
+            if (trash.Count > 0)
+            {
+                GUILayout.Label("Trash", _title);
+                foreach (var w in trash)
+                {
+                    GUILayout.BeginHorizontal(_box);
+                    GUILayout.Label("<color=#9aa3ad>" + Esc(w.name) + (w.day > 0 ? "  ·  Day " + w.day : "") + "  ·  " + w.daysLeft + " day(s) left</color>", _small);
+                    GUILayout.FlexibleSpace();
+                    if (GUILayout.Button("Restore", GUILayout.Width(120))) AdminChannel.RestoreWorld(w.id);
+                    GUILayout.EndHorizontal();
+                }
+            }
+            GUILayout.Label("<size=10>Deleted saves stay in the trash for 30 days, then they are erased for good.</size>", _small);
             GUILayout.EndScrollView();
-            GUILayout.Label("<size=10>Deleted saves go to the server trash for 30 days.</size>", _small);
             GUI.DragWindow(new Rect(0, 0, 10000, 28));
         }
 
@@ -905,6 +1133,11 @@ namespace BAMPServerBrowser
             GUI.enabled = true;
             GUILayout.EndHorizontal();
 
+            if (GUILayout.Button("Players & tools (kick, ban, message, save, trash)", GUILayout.Height(28)))
+            {
+                AdminChannel.EnterLocalMode();
+                OpenAdmin();
+            }
             bool ok = _regId != null;
             GUILayout.Label(_hostStatus, ok ? _good : _small);
             if (WorldSync.Enabled)
@@ -946,7 +1179,7 @@ namespace BAMPServerBrowser
         {
             if (_focus == 0) return;
             bool visible = ((_focus == 1 || _focus == 6) && _show) || ((_focus == 2 || _focus == 3 || _focus == 5 || _focus == 7) && ShowHostPanel)
-                           || (_focus >= 8 && _focus <= 11 && _showAdmin);
+                           || (_focus >= 8 && _focus <= 12 && _showAdmin);
             if (!visible) { _focus = 0; return; }
             if (Input.GetMouseButtonDown(0))
             {
@@ -977,11 +1210,13 @@ namespace BAMPServerBrowser
         private void UpdateClickBlock()
         {
             bool over = false;
-            if (_show || ShowHostPanel || _showAdmin)
+            if (_show || ShowHostPanel || _showAdmin || _toasts.Count > 0)
             {
                 var m = Input.mousePosition;
                 var p = new Vector2(m.x / _scale, (Screen.height - m.y) / _scale);
                 over = (_show && _listRect.Contains(p)) || (ShowHostPanel && _hostRect.Contains(p)) || (_showAdmin && _adminRect.Contains(p));
+                float vwc = Screen.width / _scale;
+                for (int i = 0; i < _toasts.Count && !over; i++) over = ToastRect(i, vwc).Contains(p);
             }
             SetBlock(over);
         }

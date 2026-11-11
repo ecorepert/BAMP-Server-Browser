@@ -14,7 +14,9 @@ methods in memory (Harmony, provided by the base mod) for the join password.
 
 | Feature | What it does |
 |---|---|
-| **Server list** | Every hosted game can be published to a public list. Players pick a game and click *Join* — no IP to type. Joins through the **Steam relay** by default (no port forwarding), or by IP:port. Games seen in the last 7 days stay listed when offline (green dot = online, grey = offline). Filter by language, *Online only*, search by name, and sort by status, name, day, players or language. |
+| **Server list** | Every hosted game can be published to a public list. Players pick a game and click *Join* — no IP to type. Joins through the **Steam relay** by default (no port forwarding), or by IP:port. Games seen in the last 7 days stay listed when offline (green dot = online, grey = offline). Filter by language, *Online only*, *Favorites only*, *Hide games with a password*, search by name, and sort by status, name, day, players or language. Selecting a game shows its **difficulty settings**, the **names of the connected players** and the **ping**. |
+| **Favorites** | *Add to favorites* on any game; favorites are listed first and you get a notification when one comes online. |
+| **Update check** | Once per launch the mod checks `version.json` on GitHub and shows a banner when a newer version exists. |
 | **Publish panel** | While hosting: show/hide the game in the list, name, description, language, max players, player password, admin password. The entry shows the language tag (e.g. **[FR]**), *Lobby* / *In game*, the in-game day, player count and mod version. |
 | **Player & admin passwords** | Both empty by default (anyone can join, no admin). With a **player password** the game is marked **[password]**, the password is asked right after clicking *Join*, and the host refuses anyone without it; players who give it automatically receive the host's shared saves. Whoever joins with the **admin password** gets a *Manage this game* window: change name, description, language, max players, passwords, public listing, and delete shared saves (the host executes; the group admin key never leaves the host's PC). |
 | **Shared world saves** | The latest version of each multiplayer world is kept on the group's save server, so any member can host the up-to-date world. Default: the host's own PC. Option: your own private VPS. |
@@ -59,7 +61,9 @@ To uninstall, delete the `ModsLocal\BAMPServerBrowser` folder.
   Double-click a game or use *Join* (*Join by IP* if you prefer IP:port). If the game shows **[password]**,
   the password is asked right after *Join* (player password, or admin password for admin rights). For an
   open game, *Join as admin* asks for the admin password.
-- **Admin**: once connected with the admin password, press **F9** → *Manage this game*.
+- **Admin**: once connected with the admin password, press **F9** → *Manage this game*: players (kick, ban,
+  unban), message to everyone, save now, game settings, shared saves and their **trash** (restore within 30 days).
+  The host gets the same window from *Publish my game* → *Players & tools*.
 - **Host your own offline game again**: select it in the list (marked *(you)*) → *Host this game again*: the
   lobby opens with your latest save of that world.
 - **Relaunch an offline game (admin only)**: an admin who joined the game once with the admin password
@@ -142,6 +146,14 @@ If your hosting provider has its own firewall, open the port there as well. Chec
 | `serverName`, `description` | `""` | Shown in the list |
 | `joinPassword` | `""` | Player password to join your hosted game (empty = open) |
 | `adminPassword` | `""` | Admin password: joining with it gives the *Manage this game* window (empty = no remote admin) |
+| `favorites` | `[]` | Favorite games (`steam:<id>` or `ip:<address>:<port>`) |
+| `notifyFavorites` | `true` | Notification when a favorite comes online |
+| `listHidePassword` | `false` | Hide games with a password in the list |
+| `checkUpdates` | `true` | Check GitHub for a newer version at launch |
+
+Passwords, the admin key and shared-saves codes are **encrypted with Windows (DPAPI)** in `config.json` and
+`relaunch.json`: only your Windows account on this PC can read them. Old plain-text values are still read and
+are encrypted on the next save. A `config.json` copied to another PC loses these values (they are recreated).
 | `language` | system language | Language shown for your hosted game in the list (`EN`, `FR`, `DE`…) |
 | `maxPlayers` | `8` | Shown in the list |
 | `toggleKey` | `F9` | Show/hide the list |
@@ -200,6 +212,7 @@ not redistributed.
 | Method | Path | Purpose |
 |---|---|---|
 | GET | `/api/servers` | Public game list (online games only) |
+| POST | `/api/worlds/<id>/restore` | (admin key) Take a world out of the trash |
 | GET | `/api/servers?offline=1` | Same, plus games seen in the last 7 days that are offline (`online: false`, `offlineFor` in seconds, no IP). A world relaunched by another host (same `worldId`) is listed once. |
 | POST | `/api/servers` | Register a game → `{id, token}` (IP taken from the connection) |
 | POST / DELETE | `/api/servers/<id>` | Heartbeat / remove (`X-Token`) |

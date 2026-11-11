@@ -124,6 +124,11 @@ namespace BAMPServerBrowser
             try
             {
                 AdminChannel.ResetClient();
+                if (extra != null && extra.Length > 0 && Encoding.UTF8.GetString(extra) == AdminChannel.KickTag)
+                {
+                    AdminChannel.KickedNotice = "You were kicked from the game by an admin.";
+                    ModEntry.Info("[Admin] kicked by an admin.");
+                }
                 if (extra != null && extra.Length > 0 && Encoding.UTF8.GetString(extra) == RefuseTag)
                 {
                     LastRefused = true;

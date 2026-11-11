@@ -170,6 +170,25 @@ namespace BAMPServerBrowser
             try { return DeleteRemote(t, id); } catch { return 0; }
         }
 
+        /// <summary>Sort un monde du propre groupe de la corbeille du serveur (clé admin de ce PC ; appel bloquant).</summary>
+        public static int RestoreRemoteWorld(string id)
+        {
+            var t = OwnTarget();
+            if (t == null) return 0;
+            if (!ValidId(id)) return 400;
+            try
+            {
+                var r = Req(t, "POST", "/api/worlds/" + id + "/restore");
+                r.ContentType = "application/json";
+                byte[] body = Encoding.UTF8.GetBytes("{}");
+                r.ContentLength = body.Length;
+                using (var st = r.GetRequestStream()) st.Write(body, 0, body.Length);
+                try { using (var resp = (HttpWebResponse)r.GetResponse()) return (int)resp.StatusCode; }
+                catch (WebException ex) when (ex.Response is HttpWebResponse hr) { using (hr) return (int)hr.StatusCode; }
+            }
+            catch { return 0; }
+        }
+
         /// <summary>Le monde existe-t-il sur ce PC, et qui l'a hébergé en dernier ?</summary>
         public static (bool exists, string lastHost) LocalWorldInfo(string worldId)
         {
@@ -239,7 +258,7 @@ namespace BAMPServerBrowser
             r.Timeout = 60000;
             r.ReadWriteTimeout = 60000;
             r.AllowAutoRedirect = false;
-            r.UserAgent = "BAMPServerBrowser/1.2";
+            r.UserAgent = BuildInfo.UserAgent;
             r.Headers["X-Share-Key"] = t.GroupKey;
             if (!string.IsNullOrEmpty(t.AdminKey)) r.Headers["X-Admin-Key"] = t.AdminKey;
             return r;

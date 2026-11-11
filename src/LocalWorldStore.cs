@@ -266,8 +266,9 @@ namespace BAMPServerBrowser
             string path = r.Path.Split('?')[0].TrimEnd('/');
             if (path == "/health") { Send(s, 200, "{\"ok\":true}"); return; }
             var parts = path.Trim('/').Split('/');
-            if (parts.Length < 2 || parts[0] != "api" || parts[1] != "worlds" || parts.Length > 3) { Send(s, 404, "{\"error\":\"not found\"}"); return; }
-            string wid = parts.Length == 3 ? parts[2] : "";
+            bool restore = parts.Length == 4 && parts[3] == "restore";
+            if (parts.Length < 2 || parts[0] != "api" || parts[1] != "worlds" || (parts.Length > 3 && !restore)) { Send(s, 404, "{\"error\":\"not found\"}"); return; }
+            string wid = parts.Length >= 3 ? parts[2] : "";
             string g = GroupDir(r.Hd("X-Share-Key"));
             if (g == null) { Send(s, 403, "{\"error\":\"share key required (>= 6 chars)\"}"); return; }
             // ce PC ne stocke que les sauvegardes de son propre groupe
@@ -339,6 +340,28 @@ namespace BAMPServerBrowser
                     File.WriteAllText(Path.Combine(d, "meta.json"), meta.ToString(Formatting.None));
                 }
                 Send(s, 200, "{\"ok\":true,\"savedAt\":" + savedAt + "}");
+                return;
+            }
+            if (r.Method == "POST" && restore && wid.Length > 0)
+            {
+                var (_, isAdminR) = AdminState(g, r.Hd("X-Admin-Key"));
+                if (!isAdminR) { Send(s, 403, "{\"error\":\"admin key required to restore\"}"); return; }
+                lock (FileLock)
+                {
+                    var m = ReadMeta(d);
+                    if (m == null) { Send(s, 404, "{\"error\":\"unknown world\"}"); return; }
+                    if ((bool?)m["deleted"] == true)
+                    {
+                        string v = Path.Combine(d, "v" + ((long?)m["savedAt"] ?? 0) + ".bin");
+                        if (!File.Exists(v)) { Send(s, 410, "{\"error\":\"backup no longer available\"}"); return; }
+                        string cur = Path.Combine(d, "current.bin");
+                        if (File.Exists(cur)) File.Delete(cur);
+                        File.Move(v, cur);
+                        m["deleted"] = false; m.Remove("deletedAt"); m.Remove("deletedBy");
+                        File.WriteAllText(Path.Combine(d, "meta.json"), m.ToString(Formatting.None));
+                    }
+                }
+                Send(s, 200, "{\"ok\":true}");
                 return;
             }
             if (r.Method == "DELETE")
