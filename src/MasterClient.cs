@@ -26,6 +26,10 @@ namespace BAMPServerBrowser
         public bool hasPassword;
         public int day;
         public string language = "";
+        /// <summary>false = partie vue récemment mais hors ligne (anciens masters : toujours true).</summary>
+        public bool online = true;
+        /// <summary>Secondes depuis la dernière fois que la partie était en ligne (si hors ligne).</summary>
+        public int offlineFor;
     }
 
     public class ServerList
@@ -111,7 +115,7 @@ namespace BAMPServerBrowser
         {
             return Task.Run(() =>
             {
-                var (st, body) = Send("GET", "/api/servers", null);
+                var (st, body) = Send("GET", "/api/servers?offline=1", null);
                 if (st != 200) return ((List<ServerEntry>)null, st == 0 ? body : "HTTP " + st);
                 try { return (JsonConvert.DeserializeObject<ServerList>(body)?.servers ?? new List<ServerEntry>(), (string)null); }
                 catch (Exception ex) { return ((List<ServerEntry>)null, ex.Message); }

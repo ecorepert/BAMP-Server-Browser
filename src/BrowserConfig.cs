@@ -30,6 +30,11 @@ namespace BAMPServerBrowser
         public int localStoragePort = 8788;
         /// <summary>Langue parlée sur la partie hébergée (code court, ex. "FR"). Vide = déduite de la langue du système.</summary>
         public string language = "";
+        /// <summary>Préférences de la liste des parties.</summary>
+        public bool listOnlineOnly;
+        public int listSort;
+        public bool listSortDesc = true;
+        public string listLanguage = "";
 
         /// <summary>Langues proposées dans le panneau d'hébergement.</summary>
         [JsonIgnore]
@@ -150,6 +155,7 @@ namespace BAMPServerBrowser
                 if (string.IsNullOrWhiteSpace(Current.adminKey)) Current.adminKey = "admin-" + RandomHex(12);
                 if (Array.IndexOf(Languages, (Current.language ?? "").Trim().ToUpperInvariant()) < 0) Current.language = SystemLanguageCode();
                 else Current.language = Current.language.Trim().ToUpperInvariant();
+                Current.listLanguage = (Current.listLanguage ?? "").Trim().ToUpperInvariant();
                 if (Current.localStoragePort < 1024 || Current.localStoragePort > 65535) Current.localStoragePort = 8788;
                 Save();
             }

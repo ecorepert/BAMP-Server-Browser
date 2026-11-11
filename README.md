@@ -14,11 +14,11 @@ methods in memory (Harmony, provided by the base mod) for the join password.
 
 | Feature | What it does |
 |---|---|
-| **Server list** | Every hosted game can be published to a public list. Players pick a game and click *Join* — no IP to type. Joins through the **Steam relay** by default (no port forwarding), or by IP:port. |
+| **Server list** | Every hosted game can be published to a public list. Players pick a game and click *Join* — no IP to type. Joins through the **Steam relay** by default (no port forwarding), or by IP:port. Games seen in the last 7 days stay listed when offline (green dot = online, grey = offline). Filter by language, *Online only*, search by name, and sort by status, name, day, players or language. |
 | **Publish panel** | While hosting: show/hide the game in the list, name, description, language, max players, password. The entry shows the language tag (e.g. **[FR]**), *Lobby* / *In game*, the in-game day, player count and mod version. |
 | **Join password** | Empty by default (anyone can join). When the host sets one, the game is marked **[password]** and the host refuses anyone without it. |
 | **Shared world saves** | The latest version of each multiplayer world is kept on the group's save server, so any member can host the up-to-date world. Default: the host's own PC. Option: your own private VPS. |
-| **Group code & admin key** | Created automatically. Only players with the group code can see the group's worlds; only the admin key can delete them. |
+| **Shared code & admin key** | Created automatically. Only players with the shared-saves code can see the group's worlds; only the admin key can delete them. The shared code is not a game password. |
 | **Headless host** | Runs the game with no window and no sound, hosts automatically, accepts players, autosaves, and offers a console (`status`, `players`, `say`, `save`, `stop`). |
 
 ---
@@ -71,8 +71,9 @@ The public list server **stores no saves**; it only lists games. Each group choo
 ### Default — on the host's PC (nothing to install)
 
 - While the game runs, the host's PC serves the group's saves on **TCP port 8788**.
-- The list window shows the **code to give your friends**, e.g. `groupe-1a2b3c4d5e6f7a8b@HOST_PUBLIC_IP:8788`
-  (*Copy* button). Friends paste it in **Group code** → *Save*.
+- While hosting, the **Publish my game** panel shows the **shared-saves code for friends** (hidden until you
+  click *Show*), e.g. `groupe-1a2b3c4d5e6f7a8b@HOST_PUBLIC_IP:8788` (*Copy* button). Friends paste it in
+  **Shared code** (list window, *Shared saves with friends*) → *Save*.
 - One-time setup on the host's router: **forward TCP 8788** to the host's PC, and allow Big Ambitions in
   the Windows firewall when asked.
 - When the host's PC is off, friends keep the copy they already have but cannot get a newer one.
@@ -132,7 +133,7 @@ If your hosting provider has its own firewall, open the port there as well. Chec
 | `maxPlayers` | `8` | Shown in the list |
 | `toggleKey` | `F9` | Show/hide the list |
 | `preferSteam` | `true` | Join through the Steam relay when possible |
-| `shareKey` | generated | Group code (`code` or `code@host:port` from a friend) |
+| `shareKey` | generated | Shared-saves code (`code` or `code@host:port` from a friend) |
 | `adminKey` | generated | Admin key for deleting worlds — keep it private |
 | `worldsUrl` | `""` | Private VPS save server; empty = the host's PC |
 | `localStoragePort` | `8788` | Port of the save server built into the game |
@@ -185,7 +186,8 @@ not redistributed.
 
 | Method | Path | Purpose |
 |---|---|---|
-| GET | `/api/servers` | Public game list |
+| GET | `/api/servers` | Public game list (online games only) |
+| GET | `/api/servers?offline=1` | Same, plus games seen in the last 7 days that are offline (`online: false`, `offlineFor` in seconds, no IP) |
 | POST | `/api/servers` | Register a game → `{id, token}` (IP taken from the connection) |
 | POST / DELETE | `/api/servers/<id>` | Heartbeat / remove (`X-Token`) |
 | GET | `/api/worlds` | Group worlds (`X-Share-Key`) |

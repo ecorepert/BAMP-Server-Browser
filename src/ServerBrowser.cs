@@ -41,11 +41,13 @@ namespace BAMPServerBrowser
 
         // ---------- UI ----------
         private float _scale = 1f;
-        private Rect _listRect = new Rect(20, 90, 600, 760);
-        private Rect _hostRect = new Rect(20, 230, 420, 330);
+        private Rect _listRect = new Rect(20, 90, 640, 800);
+        private Rect _hostRect = new Rect(20, 230, 440, 400);
         private bool _hostRectPlaced;
         private bool _styles;
-        private GUIStyle _win, _row, _rowSel, _small, _title, _bad, _good;
+        private GUIStyle _win, _row, _rowSel, _small, _title, _bad, _good, _box;
+        private Texture2D _dotOn, _dotOff;
+        private bool _showShareCode;
         private EventSystem _blockedEs;
         private bool _showIp;
         private WorldSync _sync;
@@ -258,7 +260,7 @@ namespace BAMPServerBrowser
                 var (list, err) = t.Result;
                 if (list == null) { _listStatus = "List unreachable: " + err; return; }
                 _servers = list;
-                _listStatus = list.Count == 0 ? "No open games right now." : list.Count + " open game(s).";
+                _listStatus = "";
             }));
         }
 
@@ -278,10 +280,11 @@ namespace BAMPServerBrowser
             else if (ipOk) addr = s.ip;
             else { _joinMsg = "This game can't be reached through Steam or IP."; return; }
 
+            if (!s.online) { _joinMsg = "This game is offline."; return; }
             if (Hosting) { _joinMsg = "You are already hosting a game."; return; }
             try { if (MPClient.IsConnected || MPClient.IsConnecting) { _joinMsg = "Already connected / connecting."; return; } } catch { }
 
-            JoinPassword.Pending = s.hasPassword ? (_pwForId == s.id ? _joinPw : "") : "";
+            JoinPassword.Pending = s.hasPassword ? (_pwForId == Key(s) ? _joinPw : "") : "";
             if (s.hasPassword && string.IsNullOrEmpty(JoinPassword.Pending)) { _joinMsg = "This game is password protected: enter the password."; return; }
             string err = Bridge.Join(addr, port);
             if (err != null) { _joinMsg = err; return; }
@@ -318,6 +321,28 @@ namespace BAMPServerBrowser
             _fieldFocus.normal.background = _fieldFocus.hover.background = _fieldFocus.active.background = Tex(new Color(0.16f, 0.22f, 0.34f, 1f));
             _bad = new GUIStyle(_small); _bad.normal.textColor = new Color(1f, 0.5f, 0.45f);
             _good = new GUIStyle(_small); _good.normal.textColor = new Color(0.5f, 0.9f, 0.55f);
+            _title.richText = true;
+            _row.padding = new RectOffset(28, 8, 4, 4);
+            _rowSel.padding = new RectOffset(28, 8, 4, 4);
+            _box = new GUIStyle(GUI.skin.box) { padding = new RectOffset(10, 10, 8, 8), margin = new RectOffset(0, 0, 6, 0) };
+            _box.normal.background = Tex(new Color(0.11f, 0.14f, 0.20f, 1f));
+            _dotOn = Dot(new Color(0.30f, 0.85f, 0.39f));
+            _dotOff = Dot(new Color(0.42f, 0.45f, 0.50f));
+        }
+
+        private static Texture2D Dot(Color c)
+        {
+            const int n = 22;
+            var t = new Texture2D(n, n, TextureFormat.RGBA32, false) { hideFlags = HideFlags.HideAndDontSave, filterMode = FilterMode.Bilinear };
+            float r = n / 2f;
+            for (int y = 0; y < n; y++)
+                for (int x = 0; x < n; x++)
+                {
+                    float d = Mathf.Sqrt((x + 0.5f - r) * (x + 0.5f - r) + (y + 0.5f - r) * (y + 0.5f - r));
+                    t.SetPixel(x, y, new Color(c.r, c.g, c.b, Mathf.Clamp01(r - d)));
+                }
+            t.Apply();
+            return t;
         }
 
         private static Texture2D Tex(Color c)
@@ -364,108 +389,198 @@ namespace BAMPServerBrowser
             return r;
         }
 
-        private void DrawList(int id)
-        {
-            GUILayout.BeginHorizontal();
-            GUILayout.Label("Search:", _small, GUILayout.Width(80));
-            _filter = Field(1, _filter, 40);
-            if (GUILayout.Button(_fetching ? "…" : "Refresh", GUILayout.Width(90))) Refresh();
-            if (GUILayout.Button("X", GUILayout.Width(28))) { _show = false; _autoShown = false; }
-            GUILayout.EndHorizontal();
-            GUILayout.Label(_listStatus, _small);
+        // ---------- filtres / tri de la liste ----------
+        private static readonly string[] SortNames = { "Online first", "Name", "Day", "Players", "Language" };
 
-            string own = OwnSteamId();
+        private static string Key(ServerEntry s) =>
+            s.online && !string.IsNullOrEmpty(s.id) ? s.id : "off:" + (s.steamId ?? "") + ":" + (s.ip ?? "") + ":" + s.port + ":" + (s.name ?? "");
+
+        private static string Ago(int sec)
+        {
+            if (sec < 90) return "just now";
+            if (sec < 3600) return (sec / 60) + " min ago";
+            if (sec < 86400) return (sec / 3600) + " h ago";
+            int d = sec / 86400;
+            return d + (d == 1 ? " day ago" : " days ago");
+        }
+
+        private string SortDirLabel()
+        {
+            switch (Cfg.listSort)
+            {
+                case 1: case 4: return Cfg.listSortDesc ? "Z-A" : "A-Z";
+                case 2: case 3: return Cfg.listSortDesc ? "Highest first" : "Lowest first";
+                default: return Cfg.listSortDesc ? "Most players" : "Fewest players";
+            }
+        }
+
+        private IEnumerable<ServerEntry> FilteredSorted()
+        {
             IEnumerable<ServerEntry> rows = _servers;
+            if (Cfg.listOnlineOnly) rows = rows.Where(s => s.online);
+            if (!string.IsNullOrEmpty(Cfg.listLanguage)) rows = rows.Where(s => string.Equals(s.language, Cfg.listLanguage, StringComparison.OrdinalIgnoreCase));
             if (!string.IsNullOrWhiteSpace(_filter))
             {
                 string f = _filter.Trim().ToLowerInvariant();
-                rows = rows.Where(s => (s.name + " " + s.hostName + " " + s.description + " " + s.language).ToLowerInvariant().Contains(f));
+                rows = rows.Where(s => ((s.name ?? "") + " " + (s.hostName ?? "") + " " + (s.description ?? "")).ToLowerInvariant().Contains(f));
             }
+            bool desc = Cfg.listSortDesc;
+            Func<string, string> n = x => (x ?? "").ToLowerInvariant();
+            IOrderedEnumerable<ServerEntry> o;
+            switch (Cfg.listSort)
+            {
+                case 1: o = desc ? rows.OrderByDescending(s => n(s.name)) : rows.OrderBy(s => n(s.name)); break;
+                case 2: o = desc ? rows.OrderByDescending(s => s.day) : rows.OrderBy(s => s.day); break;
+                case 3: o = desc ? rows.OrderByDescending(s => s.players) : rows.OrderBy(s => s.players); break;
+                case 4: o = desc ? rows.OrderByDescending(s => n(s.language)) : rows.OrderBy(s => n(s.language)); break;
+                default:
+                    o = rows.OrderBy(s => s.online ? 0 : 1);
+                    o = desc ? o.ThenByDescending(s => s.players) : o.ThenBy(s => s.players);
+                    o = o.ThenBy(s => s.offlineFor);
+                    break;
+            }
+            return o.ThenBy(s => n(s.name));
+        }
 
+        private void DrawList(int id)
+        {
+            // ---- ligne 1 : recherche ----
+            GUILayout.BeginHorizontal();
+            GUILayout.Label("Search name:", _small, GUILayout.Width(95));
+            _filter = Field(1, _filter, 40);
+            if (GUILayout.Button(_fetching ? "..." : "Refresh", GUILayout.Width(90))) Refresh();
+            if (GUILayout.Button("X", GUILayout.Width(28))) { _show = false; _autoShown = false; }
+            GUILayout.EndHorizontal();
+
+            // ---- ligne 2 : filtres et tri ----
+            GUILayout.BeginHorizontal();
+            var langs = _servers.Select(s => (s.language ?? "").ToUpperInvariant()).Where(l => l.Length > 0).Distinct().OrderBy(l => l).ToList();
+            if (Cfg.listLanguage.Length > 0 && !langs.Contains(Cfg.listLanguage)) langs.Insert(0, Cfg.listLanguage);
+            if (GUILayout.Button("Language: " + (Cfg.listLanguage.Length > 0 ? Cfg.listLanguage : "All"), GUILayout.Width(130)))
+            {
+                int i = langs.IndexOf(Cfg.listLanguage);
+                Cfg.listLanguage = i + 1 < langs.Count ? langs[i + 1] : "";
+                BrowserConfig.Save();
+            }
+            if (GUILayout.Button("Sort: " + SortNames[Mathf.Clamp(Cfg.listSort, 0, SortNames.Length - 1)], GUILayout.Width(150)))
+            {
+                Cfg.listSort = (Mathf.Clamp(Cfg.listSort, 0, SortNames.Length - 1) + 1) % SortNames.Length;
+                Cfg.listSortDesc = Cfg.listSort != 1 && Cfg.listSort != 4;
+                BrowserConfig.Save();
+            }
+            if (GUILayout.Button(SortDirLabel(), GUILayout.Width(120))) { Cfg.listSortDesc = !Cfg.listSortDesc; BrowserConfig.Save(); }
+            bool oo = GUILayout.Toggle(Cfg.listOnlineOnly, " Online only");
+            if (oo != Cfg.listOnlineOnly) { Cfg.listOnlineOnly = oo; BrowserConfig.Save(); }
+            GUILayout.FlexibleSpace();
+            GUILayout.EndHorizontal();
+
+            var rows = FilteredSorted().ToList();
+            int on = _servers.Count(s => s.online), off = _servers.Count - on;
+            string status = _listStatus.Length > 0 ? _listStatus
+                : _servers.Count == 0 ? "No games yet."
+                : $"{on} online · {off} offline (seen in the last 7 days)" + (rows.Count != _servers.Count ? $" · {rows.Count} shown" : "");
+            GUILayout.Label(status, _small);
+
+            // ---- liste ----
+            string own = OwnSteamId();
             _scroll = GUILayout.BeginScrollView(_scroll, GUILayout.ExpandHeight(true));
+            if (rows.Count == 0 && _servers.Count > 0) GUILayout.Label("No game matches these filters.", _small);
             foreach (var s in rows)
             {
-                bool sel = s.id == _selectedId;
+                string key = Key(s);
+                bool sel = key == _selectedId;
                 bool mine = own.Length > 0 && s.steamId == own;
                 string max = s.maxPlayers > 0 ? "/" + s.maxPlayers : "";
-                string state = s.inLobby ? "<color=#7fe08a>Lobby</color>" : "<color=#ffd24a>In game</color>";
-                string dayTxt = s.day > 0 ? $"  ·  Day {s.day}" : "";
-                string ver = s.modVersion == _bampVersion ? "" : $"  <color=#ff7a70>mod v{s.modVersion}</color>";
-                string via = (s.steamId.Length > 0 ? "Steam" : "") + (s.steamId.Length > 0 && s.port > 0 ? " + " : "") + (s.port > 0 ? "IP" : "");
                 string lang = string.IsNullOrEmpty(s.language) ? "" : $"<color=#8fc3ff>[{Esc(s.language)}]</color> ";
-                string label = $"{lang}<b>{Esc(s.name)}</b>{(s.hasPassword ? "  <color=#ffd24a>[password]</color>" : "")}{(mine ? "  <color=#9ab>(you)</color>" : "")}\n" +
-                               $"<size=11>{Esc(s.hostName)}  ·  {s.players}{max} player(s)  ·  {state}{dayTxt}  ·  {via}{ver}</size>";
+                string dayTxt = s.day > 0 ? $"  ·  Day {s.day}" : "";
+                string line2;
+                if (s.online)
+                {
+                    string state = s.inLobby ? "<color=#7fe08a>Lobby</color>" : "<color=#ffd24a>In game</color>";
+                    string ver = s.modVersion == _bampVersion ? "" : $"  <color=#ff7a70>mod v{Esc(s.modVersion)}</color>";
+                    line2 = $"{Esc(s.hostName)}  ·  {s.players}{max} player(s)  ·  {state}{dayTxt}{ver}";
+                }
+                else line2 = $"<color=#9aa3ad>{Esc(s.hostName)}  ·  Offline, last seen {Ago(s.offlineFor)}{dayTxt}</color>";
+                string name = s.online ? $"<b>{Esc(s.name)}</b>" : $"<b><color=#b8c0cc>{Esc(s.name)}</color></b>";
+                string label = $"{lang}{name}{(s.hasPassword ? "  <color=#ffd24a>[password]</color>" : "")}{(mine ? "  <color=#9ab>(you)</color>" : "")}\n<size=11>{line2}</size>";
                 if (GUILayout.Button(label, sel ? _rowSel : _row, GUILayout.Height(44)))
                 {
-                    if (sel && Event.current.clickCount >= 2) Join(s, false);
-                    _selectedId = s.id;
+                    if (sel && Event.current.clickCount >= 2 && s.online) Join(s, false);
+                    _selectedId = key;
                     _joinMsg = "";
+                }
+                if (Event.current.type == EventType.Repaint)
+                {
+                    var r = GUILayoutUtility.GetLastRect();
+                    GUI.DrawTexture(new Rect(r.x + 9, r.y + 9, 11, 11), s.online ? _dotOn : _dotOff);
                 }
             }
             GUILayout.EndScrollView();
 
-            var cur = _servers.FirstOrDefault(s => s.id == _selectedId);
-            if (cur != null)
+            // ---- rejoindre la partie sélectionnée ----
+            var cur = _servers.FirstOrDefault(s => Key(s) == _selectedId);
+            GUILayout.BeginVertical(_box);
+            if (cur == null) GUILayout.Label("Select a game in the list to join it.", _small);
+            else
             {
+                GUILayout.Label((cur.online ? "<color=#4cd964>Online</color>" : "<color=#9aa3ad>Offline</color>") + "  " + Esc(cur.name) +
+                                (string.IsNullOrEmpty(cur.language) ? "" : "  ·  " + Esc(cur.language)) + (cur.day > 0 ? "  ·  Day " + cur.day : ""), _title);
                 if (!string.IsNullOrEmpty(cur.description)) GUILayout.Label(Esc(cur.description), _small);
-                if (cur.hasPassword)
+                if (!cur.online)
                 {
-                    if (_pwForId != cur.id) { _pwForId = cur.id; _joinPw = ""; }
+                    string who = string.IsNullOrEmpty(cur.hostName) ? "the host" : Esc(cur.hostName);
+                    GUILayout.Label($"This game is offline (last seen {Ago(cur.offlineFor)}). You can join it once {who} starts hosting again.", _small);
+                }
+                else
+                {
+                    if (cur.hasPassword)
+                    {
+                        if (_pwForId != Key(cur)) { _pwForId = Key(cur); _joinPw = ""; }
+                        GUILayout.BeginHorizontal();
+                        GUILayout.Label("Password:", _small, GUILayout.Width(95));
+                        _joinPw = Field(6, _joinPw, 64, mask: true);
+                        GUILayout.EndHorizontal();
+                    }
+                    if (JoinPassword.LastRefused) GUILayout.Label("Connection refused by the host: wrong password.", _bad);
+                    if (cur.modVersion != _bampVersion)
+                        GUILayout.Label($"Different mod version (host v{Esc(cur.modVersion)}, you v{_bampVersion}): the connection may be refused.", _bad);
                     GUILayout.BeginHorizontal();
-                    GUILayout.Label("Password:", _small, GUILayout.Width(110));
-                    _joinPw = Field(6, _joinPw, 64, mask: true);
+                    bool canSteam = cur.steamId.Length > 0 && cur.steamId != own;
+                    bool canIp = cur.ip.Length > 0 && cur.port > 0;
+                    GUI.enabled = canSteam || canIp;
+                    if (GUILayout.Button("Join", GUILayout.Height(34))) Join(cur, false);
+                    GUI.enabled = canIp && canSteam;
+                    if (GUILayout.Button(canIp ? $"Join by IP ({cur.ip}:{cur.port})" : "IP not available", GUILayout.Height(34))) Join(cur, true);
+                    GUI.enabled = true;
                     GUILayout.EndHorizontal();
                 }
-                if (JoinPassword.LastRefused) GUILayout.Label("Connection refused by the host: wrong password.", _bad);
-                if (cur.modVersion != _bampVersion)
-                    GUILayout.Label($"Different mod version (host v{cur.modVersion}, you v{_bampVersion}): the connection may be refused.", _bad);
-                GUILayout.BeginHorizontal();
-                bool canSteam = cur.steamId.Length > 0 && cur.steamId != own;
-                bool canIp = cur.ip.Length > 0 && cur.port > 0;
-                GUI.enabled = canSteam || canIp;
-                if (GUILayout.Button("Join", GUILayout.Height(34))) Join(cur, false);
-                GUI.enabled = canIp && canSteam;
-                if (GUILayout.Button(canIp ? $"Join by IP ({cur.ip}:{cur.port})" : "IP not available", GUILayout.Height(34))) Join(cur, true);
-                GUI.enabled = true;
-                GUILayout.EndHorizontal();
             }
             if (_joinMsg.Length > 0) GUILayout.Label(_joinMsg, _bad);
+            GUILayout.EndVertical();
 
+            // ---- sauvegardes partagées ----
             GUILayout.Space(6);
-            GUILayout.Label("Group saves (your PC or your own server)", _title);
+            GUILayout.Label("Shared saves with friends", _title);
+            GUILayout.Label("<size=11>Everyone who enters the same code shares the same multiplayer worlds. It is not a game password and not the admin key.</size>", _small);
             GUILayout.BeginHorizontal();
-            GUILayout.Label("Group code:", _small, GUILayout.Width(110));
-            _editKey = Field(4, _editKey, 64);
+            GUILayout.Label("Shared code:", _small, GUILayout.Width(95));
+            _editKey = Field(4, _editKey, 64, mask: _focus != 4);
             bool keyDirty = (_editKey ?? "").Trim() != (Cfg.shareKey ?? "");
             GUI.enabled = keyDirty;
-            if (GUILayout.Button("Save", GUILayout.Width(90)))
+            if (GUILayout.Button("Save", GUILayout.Width(80)))
             {
                 string k = (_editKey ?? "").Trim();
                 int at = k.LastIndexOf('@');
                 string kk = at > 0 ? k.Substring(0, at) : k;
-                if (k.Length > 0 && kk.Length < 6) _joinMsg = "The group code must be at least 6 characters long.";
+                if (k.Length > 0 && kk.Length < 6) _joinMsg = "The shared code must be at least 6 characters long.";
                 else { Cfg.shareKey = k; BrowserConfig.Save(); _sync.SyncNow(); _joinMsg = ""; }
             }
             GUI.enabled = WorldSync.Enabled && !_sync.Busy;
-            if (GUILayout.Button(_sync.Busy ? "…" : "Sync now", GUILayout.Width(100))) _sync.SyncNow();
+            if (GUILayout.Button(_sync.Busy ? "..." : "Sync now", GUILayout.Width(95))) _sync.SyncNow();
             GUI.enabled = true;
             GUILayout.EndHorizontal();
             GUILayout.Label("<size=11>" + Esc(_sync.Status) + "</size>", _small);
-            if (WorldSync.Enabled)
-            {
-                string code = Cfg.ShareCode(PublicIp());
-                string where = Cfg.IsLocalStorageOwner
-                    ? (LocalWorldStore.Running ? $"on this PC (forward TCP port {Cfg.localStoragePort} on your router for your friends)" : "on this PC - port " + Cfg.localStoragePort + " unavailable: " + LocalWorldStore.LastError)
-                    : (Cfg.CodeHost.Length > 0 && (Cfg.worldsUrl ?? "").Trim().Length == 0 ? "on the group host " + Cfg.CodeHost : "external server " + Cfg.WorldsBaseUrl);
-                GUILayout.Label("<size=11>Saves: " + Esc(where) + "</size>", LocalWorldStore.LastError.Length > 0 && Cfg.IsLocalStorageOwner ? _bad : _small);
-                GUILayout.BeginHorizontal();
-                GUILayout.Label("<size=11>Code to give your friends: <b>" + Esc(code.Length > 0 ? code : "detecting public IP…") + "</b></size>", _small);
-                GUI.enabled = code.Length > 0;
-                if (GUILayout.Button("Copy", GUILayout.Width(70))) { try { GUIUtility.systemCopyBuffer = code; } catch { } }
-                GUI.enabled = true;
-                GUILayout.EndHorizontal();
-            }
-            GUILayout.Label($"<size=10>{Cfg.toggleKey}: show/hide · Double-click to join · Steam = no port forwarding needed</size>", _small);
+            GUILayout.Label($"<size=10>{Cfg.toggleKey}: show/hide · Double-click to join · Green dot = online · The code for friends is in \"Publish my game\" while you host.</size>", _small);
             GUI.DragWindow(new Rect(0, 0, 10000, 28));
         }
 
@@ -522,6 +637,23 @@ namespace BAMPServerBrowser
 
             bool ok = _regId != null;
             GUILayout.Label(_hostStatus, ok ? _good : _small);
+            if (WorldSync.Enabled)
+            {
+                string code = Cfg.ShareCode(PublicIp());
+                GUILayout.BeginHorizontal();
+                string shown = code.Length == 0 ? "detecting public IP..." : _showShareCode ? code : "*********";
+                GUILayout.Label("<size=11>Shared-saves code for friends: <b>" + Esc(shown) + "</b></size>", _small);
+                GUI.enabled = code.Length > 0;
+                if (GUILayout.Button(_showShareCode ? "Hide" : "Show", GUILayout.Width(60))) _showShareCode = !_showShareCode;
+                if (GUILayout.Button("Copy", GUILayout.Width(60))) { try { GUIUtility.systemCopyBuffer = code; } catch { } }
+                GUI.enabled = true;
+                GUILayout.EndHorizontal();
+                if (Cfg.IsLocalStorageOwner)
+                    GUILayout.Label("<size=10>" + (LocalWorldStore.Running
+                        ? "Saves are stored on this PC: friends need TCP port " + Cfg.localStoragePort + " open on your router."
+                        : "Save server unavailable on port " + Cfg.localStoragePort + ": " + Esc(LocalWorldStore.LastError)) + "</size>",
+                        LocalWorldStore.LastError.Length > 0 ? _bad : _small);
+            }
             if (WorldSync.Enabled)
                 GUILayout.Label("<size=11>Shared world: " + Esc(_sync.LastUpload.Length > 0 ? "last upload " + _sync.LastUpload : "uploaded after the next save") + "</size>", _small);
             if (ok)

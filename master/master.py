@@ -3,7 +3,8 @@
 
 Stdlib only. Stockage en memoire, les entrees expirent sans heartbeat.
 
-  GET    /api/servers               -> {"servers": [...]}
+  GET    /api/servers               -> {"servers": [...]} parties en ligne
+  GET    /api/servers?offline=1     -> idem + parties vues recemment mais hors ligne ("online": false)
   POST   /api/servers               -> enregistre une partie, renvoie {"id", "token", "ttl"}
   POST   /api/servers/<id>          -> heartbeat / mise a jour (header X-Token)
   DELETE /api/servers/<id>          -> retire la partie (header X-Token)
@@ -70,6 +71,52 @@ _wlock = threading.Lock()
 
 _lock = threading.Lock()
 _servers = {}       # id -> dict
+# Parties hors ligne recemment vues (cle stable steamId ou ip:port), conservees OFFLINE_DAYS jours
+# et sauvegardees sur disque pour survivre a un redemarrage du service.
+OFFLINE_DAYS = 7
+MAX_OFFLINE = 300
+OFFLINE_FILE = os.environ.get("BAMP_OFFLINE_FILE") or os.path.join(os.environ.get("STATE_DIRECTORY", "/var/lib/bamp-master"), "offline.json")
+_offline = {}       # cle -> dict public (sans token / ip)
+_PUBLIC_KEYS = ("name", "hostName", "description", "port", "steamId", "players", "maxPlayers", "inLobby",
+                "modVersion", "gameVersion", "hasPassword", "day", "language")
+
+
+def _server_key(s):
+    return ("steam:" + s["steamId"]) if s.get("steamId") else ("ip:%s:%s" % (s.get("ip", ""), s.get("port", 0)))
+
+
+def _load_offline():
+    try:
+        with open(OFFLINE_FILE, "r", encoding="utf-8") as fh:
+            data = json.load(fh)
+        if isinstance(data, dict):
+            for k, v in data.items():
+                if isinstance(v, dict) and isinstance(v.get("lastSeen"), (int, float)):
+                    _offline[str(k)[:64]] = {kk: v.get(kk) for kk in _PUBLIC_KEYS + ("lastSeen",)}
+    except (OSError, ValueError):
+        pass
+
+
+def _save_offline():
+    try:
+        os.makedirs(os.path.dirname(OFFLINE_FILE), exist_ok=True)
+        tmp = OFFLINE_FILE + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as fh:
+            json.dump(_offline, fh)
+        os.replace(tmp, OFFLINE_FILE)
+    except OSError:
+        pass
+
+
+def _go_offline(s, now):
+    """Passe une partie en ligne dans la liste hors ligne (appele sous _lock)."""
+    snap = {k: s.get(k) for k in _PUBLIC_KEYS}
+    snap["players"] = 0
+    snap["lastSeen"] = s.get("lastSeen", now)
+    _offline[_server_key(s)] = snap
+    if len(_offline) > MAX_OFFLINE:
+        for k in sorted(_offline, key=lambda k: _offline[k]["lastSeen"])[:len(_offline) - MAX_OFFLINE]:
+            del _offline[k]
 
 
 def _clean_str(v, n):
@@ -109,15 +156,30 @@ def _fields(body):
 
 
 def _purge(now):
+    changed = False
     dead = [k for k, s in _servers.items() if now - s["lastSeen"] > TTL]
     for k in dead:
-        del _servers[k]
+        _go_offline(_servers.pop(k), now)
+        changed = True
+    old = [k for k, s in _offline.items() if now - s["lastSeen"] > OFFLINE_DAYS * 86400]
+    for k in old:
+        del _offline[k]
+        changed = True
+    if changed:
+        _save_offline()
 
 
 def _public(s, now):
     out = {k: v for k, v in s.items() if k not in ("token", "lastSeen", "created")}
     out["ip"] = s["ip"] if s["port"] > 0 else ""
     out["age"] = int(now - s["created"])
+    out["online"] = True
+    return out
+
+
+def _public_offline(s, now):
+    out = {k: s.get(k) for k in _PUBLIC_KEYS}
+    out.update(id="", ip="", age=0, online=False, offlineFor=int(now - s["lastSeen"]))
     return out
 
 
@@ -304,10 +366,14 @@ class Handler(BaseHTTPRequestHandler):
             return
         if path == "/api/servers":
             now = time.time()
+            want_offline = "offline=1" in (self.path.split("?", 1) + [""])[1]
             with _lock:
                 _purge(now)
                 lst = [_public(s, now) for s in _servers.values()]
-            lst.sort(key=lambda s: (-s["players"], s["name"].lower()))
+                if want_offline:
+                    online_keys = {_server_key(s) for s in _servers.values()}
+                    lst += [_public_offline(s, now) for k, s in _offline.items() if k not in online_keys]
+            lst.sort(key=lambda s: (not s["online"], -s["players"], (s["name"] or "").lower()))
             return self._send(200, {"servers": lst, "ttl": TTL})
         self._send(404, {"error": "not found"})
 
@@ -335,6 +401,8 @@ class Handler(BaseHTTPRequestHandler):
                 sid = secrets.token_hex(8)
                 token = secrets.token_hex(16)
                 _servers[sid] = dict(f, id=sid, ip=ip, token=token, lastSeen=now, created=now)
+                if _offline.pop(_server_key(_servers[sid]), None) is not None:
+                    _save_offline()
             return self._send(201, {"id": sid, "token": token, "ttl": TTL, "ip": ip})
         sid = self._id_from_path()
         if sid:
@@ -446,12 +514,14 @@ class Handler(BaseHTTPRequestHandler):
         with _lock:
             s = _servers.get(sid)
             if s and secrets.compare_digest(s["token"], self.headers.get("X-Token", "")):
-                del _servers[sid]
+                _go_offline(_servers.pop(sid), time.time())
+                _save_offline()
                 return self._send(200, {"ok": True})
         self._send(404, {"error": "unknown server"})
 
 
 if __name__ == "__main__":
+    _load_offline()
     srv = ThreadingHTTPServer((HOST, PORT), Handler)
     srv.daemon_threads = True
     print("BAMP master listening on %s:%d" % (HOST, PORT), flush=True)
