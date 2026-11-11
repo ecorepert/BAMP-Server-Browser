@@ -103,6 +103,8 @@ def _fields(body):
         "modVersion": _clean_str(body.get("modVersion"), 24),
         "gameVersion": _clean_str(body.get("gameVersion"), 32),
         "hasPassword": bool(body.get("hasPassword", False)),
+        "day": _clean_int(body.get("day"), 0, 1000000, 0),
+        "language": "".join(c for c in _clean_str(body.get("language"), 8).upper() if c.isalpha()),
     }
 
 

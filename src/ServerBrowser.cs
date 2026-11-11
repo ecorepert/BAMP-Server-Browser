@@ -42,7 +42,7 @@ namespace BAMPServerBrowser
         // ---------- UI ----------
         private float _scale = 1f;
         private Rect _listRect = new Rect(20, 90, 600, 760);
-        private Rect _hostRect = new Rect(20, 230, 420, 300);
+        private Rect _hostRect = new Rect(20, 230, 420, 330);
         private bool _hostRectPlaced;
         private bool _styles;
         private GUIStyle _win, _row, _rowSel, _small, _title, _bad, _good;
@@ -122,6 +122,8 @@ namespace BAMPServerBrowser
             int port = 0, players = 1;
             bool lobby = true;
             try { port = MPServer.BoundPort; players = MPServer.ConnectedCount + 1; lobby = MPServer.IsInLobby; } catch { }
+            int day = 0;
+            try { day = SaveGameManager.Current?.Day ?? 0; } catch { }
             string name = string.IsNullOrWhiteSpace(Cfg.serverName) ? (host.Length > 0 ? host + "'s game" : "Big Ambitions game") : Cfg.serverName.Trim();
             return new HostInfo
             {
@@ -136,6 +138,8 @@ namespace BAMPServerBrowser
                 modVersion = _bampVersion,
                 gameVersion = Application.version,
                 hasPassword = JoinPassword.HostHasPassword,
+                day = day,
+                language = Cfg.language ?? "",
             };
         }
 
@@ -375,7 +379,7 @@ namespace BAMPServerBrowser
             if (!string.IsNullOrWhiteSpace(_filter))
             {
                 string f = _filter.Trim().ToLowerInvariant();
-                rows = rows.Where(s => (s.name + " " + s.hostName + " " + s.description).ToLowerInvariant().Contains(f));
+                rows = rows.Where(s => (s.name + " " + s.hostName + " " + s.description + " " + s.language).ToLowerInvariant().Contains(f));
             }
 
             _scroll = GUILayout.BeginScrollView(_scroll, GUILayout.ExpandHeight(true));
@@ -385,10 +389,12 @@ namespace BAMPServerBrowser
                 bool mine = own.Length > 0 && s.steamId == own;
                 string max = s.maxPlayers > 0 ? "/" + s.maxPlayers : "";
                 string state = s.inLobby ? "<color=#7fe08a>Lobby</color>" : "<color=#ffd24a>In game</color>";
+                string dayTxt = s.day > 0 ? $"  ·  Day {s.day}" : "";
                 string ver = s.modVersion == _bampVersion ? "" : $"  <color=#ff7a70>mod v{s.modVersion}</color>";
                 string via = (s.steamId.Length > 0 ? "Steam" : "") + (s.steamId.Length > 0 && s.port > 0 ? " + " : "") + (s.port > 0 ? "IP" : "");
-                string label = $"<b>{Esc(s.name)}</b>{(s.hasPassword ? "  <color=#ffd24a>[password]</color>" : "")}{(mine ? "  <color=#9ab>(you)</color>" : "")}\n" +
-                               $"<size=11>{Esc(s.hostName)}  ·  {s.players}{max} player(s)  ·  {state}  ·  {via}{ver}</size>";
+                string lang = string.IsNullOrEmpty(s.language) ? "" : $"<color=#8fc3ff>[{Esc(s.language)}]</color> ";
+                string label = $"{lang}<b>{Esc(s.name)}</b>{(s.hasPassword ? "  <color=#ffd24a>[password]</color>" : "")}{(mine ? "  <color=#9ab>(you)</color>" : "")}\n" +
+                               $"<size=11>{Esc(s.hostName)}  ·  {s.players}{max} player(s)  ·  {state}{dayTxt}  ·  {via}{ver}</size>";
                 if (GUILayout.Button(label, sel ? _rowSel : _row, GUILayout.Height(44)))
                 {
                     if (sel && Event.current.clickCount >= 2) Join(s, false);
@@ -475,6 +481,19 @@ namespace BAMPServerBrowser
             GUILayout.BeginHorizontal();
             GUILayout.Label("Description:", _small, GUILayout.Width(80));
             _editDesc = Field(3, _editDesc, 120);
+            GUILayout.EndHorizontal();
+            GUILayout.BeginHorizontal();
+            GUILayout.Label("Language:", _small, GUILayout.Width(80));
+            {
+                var langs = BrowserConfig.Languages;
+                int li = Mathf.Max(0, System.Array.IndexOf(langs, Cfg.language));
+                int ni = li;
+                if (GUILayout.Button("<", GUILayout.Width(26))) ni = (li + langs.Length - 1) % langs.Length;
+                GUILayout.Label(langs[li], _title, GUILayout.Width(36));
+                if (GUILayout.Button(">", GUILayout.Width(26))) ni = (li + 1) % langs.Length;
+                if (ni != li) { Cfg.language = langs[ni]; BrowserConfig.Save(); PushUpdateNow(); }
+            }
+            GUILayout.FlexibleSpace();
             GUILayout.EndHorizontal();
             GUILayout.BeginHorizontal();
             GUILayout.Label("Password:", _small, GUILayout.Width(80));

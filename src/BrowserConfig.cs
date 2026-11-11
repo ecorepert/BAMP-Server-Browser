@@ -28,6 +28,44 @@ namespace BAMPServerBrowser
         public string worldsUrl = "";
         /// <summary>Port du serveur de sauvegarde intégré au jeu (mode local). À ouvrir (TCP) sur la box.</summary>
         public int localStoragePort = 8788;
+        /// <summary>Langue parlée sur la partie hébergée (code court, ex. "FR"). Vide = déduite de la langue du système.</summary>
+        public string language = "";
+
+        /// <summary>Langues proposées dans le panneau d'hébergement.</summary>
+        [JsonIgnore]
+        public static readonly string[] Languages =
+            { "EN", "FR", "DE", "ES", "IT", "PT", "NL", "PL", "RU", "UK", "TR", "CS", "SV", "DA", "NO", "FI", "HU", "RO", "ZH", "JA", "KO", "AR" };
+
+        private static string SystemLanguageCode()
+        {
+            switch (Application.systemLanguage)
+            {
+                case SystemLanguage.French: return "FR";
+                case SystemLanguage.German: return "DE";
+                case SystemLanguage.Spanish: return "ES";
+                case SystemLanguage.Italian: return "IT";
+                case SystemLanguage.Portuguese: return "PT";
+                case SystemLanguage.Dutch: return "NL";
+                case SystemLanguage.Polish: return "PL";
+                case SystemLanguage.Russian: return "RU";
+                case SystemLanguage.Ukrainian: return "UK";
+                case SystemLanguage.Turkish: return "TR";
+                case SystemLanguage.Czech: return "CS";
+                case SystemLanguage.Swedish: return "SV";
+                case SystemLanguage.Danish: return "DA";
+                case SystemLanguage.Norwegian: return "NO";
+                case SystemLanguage.Finnish: return "FI";
+                case SystemLanguage.Hungarian: return "HU";
+                case SystemLanguage.Romanian: return "RO";
+                case SystemLanguage.Chinese:
+                case SystemLanguage.ChineseSimplified:
+                case SystemLanguage.ChineseTraditional: return "ZH";
+                case SystemLanguage.Japanese: return "JA";
+                case SystemLanguage.Korean: return "KO";
+                case SystemLanguage.Arabic: return "AR";
+                default: return "EN";
+            }
+        }
 
         /// <summary>Partie "code" du code de groupe (avant un éventuel "@hote:port").</summary>
         [JsonIgnore]
@@ -110,6 +148,8 @@ namespace BAMPServerBrowser
                 // Première utilisation : code de groupe et clé admin générés automatiquement.
                 if (string.IsNullOrWhiteSpace(Current.shareKey)) Current.shareKey = "groupe-" + RandomHex(8);
                 if (string.IsNullOrWhiteSpace(Current.adminKey)) Current.adminKey = "admin-" + RandomHex(12);
+                if (Array.IndexOf(Languages, (Current.language ?? "").Trim().ToUpperInvariant()) < 0) Current.language = SystemLanguageCode();
+                else Current.language = Current.language.Trim().ToUpperInvariant();
                 if (Current.localStoragePort < 1024 || Current.localStoragePort > 65535) Current.localStoragePort = 8788;
                 Save();
             }

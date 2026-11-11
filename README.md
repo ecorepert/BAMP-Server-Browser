@@ -15,7 +15,7 @@ methods in memory (Harmony, provided by the base mod) for the join password.
 | Feature | What it does |
 |---|---|
 | **Server list** | Every hosted game can be published to a public list. Players pick a game and click *Join* — no IP to type. Joins through the **Steam relay** by default (no port forwarding), or by IP:port. |
-| **Publish panel** | While hosting: show/hide the game in the list, name, description, max players, password. The entry shows *Lobby* / *In game*, player count and mod version. |
+| **Publish panel** | While hosting: show/hide the game in the list, name, description, language, max players, password. The entry shows the language tag (e.g. **[FR]**), *Lobby* / *In game*, the in-game day, player count and mod version. |
 | **Join password** | Empty by default (anyone can join). When the host sets one, the game is marked **[password]** and the host refuses anyone without it. |
 | **Shared world saves** | The latest version of each multiplayer world is kept on the group's save server, so any member can host the up-to-date world. Default: the host's own PC. Option: your own private VPS. |
 | **Group code & admin key** | Created automatically. Only players with the group code can see the group's worlds; only the admin key can delete them. |
@@ -128,6 +128,7 @@ If your hosting provider has its own firewall, open the port there as well. Chec
 | `publish` | `true` | Publish your hosted games in the list |
 | `serverName`, `description` | `""` | Shown in the list |
 | `joinPassword` | `""` | Password to join your hosted game (empty = open) |
+| `language` | system language | Language shown for your hosted game in the list (`EN`, `FR`, `DE`…) |
 | `maxPlayers` | `8` | Shown in the list |
 | `toggleKey` | `F9` | Show/hide the list |
 | `preferSteam` | `true` | Join through the Steam relay when possible |

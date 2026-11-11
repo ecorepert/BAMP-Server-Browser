@@ -24,6 +24,8 @@ namespace BAMPServerBrowser
         public string gameVersion = "";
         public int age;
         public bool hasPassword;
+        public int day;
+        public string language = "";
     }
 
     public class ServerList
@@ -52,6 +54,8 @@ namespace BAMPServerBrowser
         public string modVersion;
         public string gameVersion;
         public bool hasPassword;
+        public int day;
+        public string language;
     }
 
     /// <summary>Appels HTTP vers le master server (thread de fond, résultat via callback).</summary>
