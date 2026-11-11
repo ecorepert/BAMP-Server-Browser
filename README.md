@@ -60,6 +60,9 @@ To uninstall, delete the `ModsLocal\BAMPServerBrowser` folder.
   the password is asked right after *Join* (player password, or admin password for admin rights). For an
   open game, *Join as admin* asks for the admin password.
 - **Admin**: once connected with the admin password, press **F9** → *Manage this game*.
+- **Relaunch an offline game (admin only)**: an admin who joined the game once with the admin password
+  can restart it when it is offline: select it in the list → *Relaunch as admin* → admin password. Their PC
+  hosts its copy of the world (from the shared saves) with the same name, description, language and passwords.
 - **Host**: *Host New Game* or *Host Saved Game*. The **Publish my game** panel appears in the lobby.
 - **F9**: show/hide the list at any time (joining needs the main menu).
 - Panels can be dragged by their title bar.
@@ -190,7 +193,7 @@ not redistributed.
 | Method | Path | Purpose |
 |---|---|---|
 | GET | `/api/servers` | Public game list (online games only) |
-| GET | `/api/servers?offline=1` | Same, plus games seen in the last 7 days that are offline (`online: false`, `offlineFor` in seconds, no IP) |
+| GET | `/api/servers?offline=1` | Same, plus games seen in the last 7 days that are offline (`online: false`, `offlineFor` in seconds, no IP). A world relaunched by another host (same `worldId`) is listed once. |
 | POST | `/api/servers` | Register a game → `{id, token}` (IP taken from the connection) |
 | POST / DELETE | `/api/servers/<id>` | Heartbeat / remove (`X-Token`) |
 | GET | `/api/worlds` | Group worlds (`X-Share-Key`) |

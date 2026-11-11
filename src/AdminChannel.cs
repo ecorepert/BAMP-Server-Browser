@@ -41,6 +41,8 @@ namespace BAMPServerBrowser
         public static volatile bool AdminRefused;
         public static string HostPid = "";
         public static string LastResult = "";
+        /// <summary>Nom de l'hôte de la partie rejointe (pour l'afficher sur la relance).</summary>
+        public static string JoinedHostName = "";
         public class RemoteSettings { public string name = "", desc = "", lang = ""; public int max; public bool hasPlayerPw, hasAdminPw, publish; public bool loaded; }
         public static RemoteSettings Settings = new RemoteSettings();
         public class RemoteWorldInfo { public string id, name; public int day; }
@@ -138,6 +140,7 @@ namespace BAMPServerBrowser
                 todo = Peers.Where(kv => !kv.Value.Welcomed).Select(kv => (kv.Key, kv.Value)).ToList();
                 foreach (var t in todo) t.p.Welcomed = true;
             }
+            TickRelaunchInfo();
             foreach (var (pid, p) in todo)
             {
                 SendTo(pid, new { t = "w", r = p.Role == Role.Admin ? "a" : "p", bad = p.AdminRefused ? 1 : 0 });
@@ -165,7 +168,101 @@ namespace BAMPServerBrowser
                 pp = string.IsNullOrEmpty(Cfg.joinPassword) ? 0 : 1, ap = string.IsNullOrEmpty(Cfg.adminPassword) ? 0 : 1, pub = Cfg.publish ? 1 : 0
             });
             SendTo(pid, new { t = "gd", d = Cfg.description ?? "" });
+            string world = CurrentWorldId();
+            if (world.Length > 0 && !string.IsNullOrEmpty(Cfg.adminPassword))
+            {
+                SendTo(pid, new { t = "rl", i = world, ah = RelaunchHash(world, Cfg.adminPassword) });
+                SendTo(pid, new { t = "rp", p = Cfg.joinPassword ?? "" });
+            }
         }
+
+        private static string CurrentWorldId()
+        {
+            try { return MPSaveCoordinator.ActivePlaythroughId ?? ""; } catch { return ""; }
+        }
+
+        private static string _lastWorld = "", _lastAdminPw = "", _lastPlayerPw = "";
+        private static float _nextWorldCheck;
+
+        /// <summary>Renvoie les infos de relance aux admins quand le monde ou les mots de passe changent.</summary>
+        private static void TickRelaunchInfo()
+        {
+            if (UnityEngine.Time.unscaledTime < _nextWorldCheck) return;
+            _nextWorldCheck = UnityEngine.Time.unscaledTime + 10f;
+            string w = CurrentWorldId(), a = Cfg.adminPassword ?? "", p = Cfg.joinPassword ?? "";
+            if (w == _lastWorld && a == _lastAdminPw && p == _lastPlayerPw) return;
+            _lastWorld = w; _lastAdminPw = a; _lastPlayerPw = p;
+            List<string> admins;
+            lock (PeersLock) admins = Peers.Where(kv => kv.Value.Welcomed && kv.Value.Role == Role.Admin).Select(kv => kv.Key).ToList();
+            foreach (var pid in admins) SendSettings(pid);
+        }
+
+        // =====================================================================
+        //  Relance d'une partie hors ligne par un admin
+        // =====================================================================
+        /// <summary>Ce qu'un admin garde sur son PC pour pouvoir relancer la partie quand l'hôte est hors ligne.</summary>
+        public class RelaunchInfo
+        {
+            public string worldId = "", adminHash = "", playerPassword = "";
+            public string name = "", desc = "", lang = "", hostName = "";
+            public int max = 8;
+            public long savedAt;
+        }
+
+        private static string RelaunchPath() => System.IO.Path.Combine(System.IO.Path.GetDirectoryName(BrowserConfig.FilePath), "relaunch.json");
+
+        private static Dictionary<string, RelaunchInfo> _rlMem;
+
+        private static Dictionary<string, RelaunchInfo> LoadRelaunchAll()
+        {
+            if (_rlMem != null) return _rlMem;
+            _rlMem = new Dictionary<string, RelaunchInfo>();
+            try
+            {
+                string f = RelaunchPath();
+                if (System.IO.File.Exists(f))
+                    _rlMem = JsonConvert.DeserializeObject<Dictionary<string, RelaunchInfo>>(System.IO.File.ReadAllText(f)) ?? new Dictionary<string, RelaunchInfo>();
+            }
+            catch { }
+            return _rlMem;
+        }
+
+        public static RelaunchInfo GetRelaunch(string worldId)
+        {
+            if (string.IsNullOrEmpty(worldId)) return null;
+            return LoadRelaunchAll().TryGetValue(worldId, out var r) ? r : null;
+        }
+
+        private static void SaveRelaunch(RelaunchInfo r)
+        {
+            try
+            {
+                var all = LoadRelaunchAll();
+                all[r.worldId] = r;
+                System.IO.File.WriteAllText(RelaunchPath(), JsonConvert.SerializeObject(all, Formatting.Indented));
+            }
+            catch (Exception ex) { ModEntry.Warn("[Admin] relaunch info: " + ex.Message); }
+        }
+
+        /// <summary>Empreinte lente du mot de passe admin, salée par le monde (vérifiée hors ligne sur le PC de l'admin).</summary>
+        public static string RelaunchHash(string worldId, string pw)
+        {
+            byte[] salt = Encoding.UTF8.GetBytes("bsb-relaunch:" + (worldId ?? ""));
+            using (var kdf = new System.Security.Cryptography.Rfc2898DeriveBytes(pw ?? "", salt, 20000))
+                return BitConverter.ToString(kdf.GetBytes(32)).Replace("-", "").ToLowerInvariant();
+        }
+
+        public static bool CheckRelaunchPassword(RelaunchInfo r, string pw)
+        {
+            if (r == null || string.IsNullOrEmpty(pw) || string.IsNullOrEmpty(r.adminHash)) return false;
+            string h = RelaunchHash(r.worldId, pw);
+            if (h.Length != r.adminHash.Length) return false;
+            int diff = 0;
+            for (int i = 0; i < h.Length; i++) diff |= h[i] ^ r.adminHash[i];
+            return diff == 0;
+        }
+
+        private static string _pendingWorld = "", _pendingHash = "";
 
         /// <summary>Appelé quand l'hôte a changé ses réglages (pour que la fenêtre admin se mette à jour).</summary>
         public static Action SettingsChanged;
@@ -279,6 +376,19 @@ namespace BAMPServerBrowser
                     Settings.loaded = true;
                     break;
                 case "gd": Settings.desc = (string)o["d"] ?? ""; break;
+                case "rl": _pendingWorld = (string)o["i"] ?? ""; _pendingHash = (string)o["ah"] ?? ""; break;
+                case "rp":
+                    if (_pendingWorld.Length > 0 && _pendingHash.Length > 0)
+                    {
+                        SaveRelaunch(new RelaunchInfo
+                        {
+                            worldId = _pendingWorld, adminHash = _pendingHash, playerPassword = (string)o["p"] ?? "",
+                            name = Settings.name, desc = Settings.desc, lang = Settings.lang, max = Settings.max > 0 ? Settings.max : 8,
+                            hostName = JoinedHostName ?? "", savedAt = DateTimeOffset.UtcNow.ToUnixTimeSeconds()
+                        });
+                        ModEntry.Info("[Admin] relaunch info saved for this world.");
+                    }
+                    break;
                 case "r": LastResult = ((int?)o["ok"] == 1 ? "" : "! ") + ((string)o["m"] ?? ""); break;
                 case "w0": _incoming = new List<RemoteWorldInfo>(); WorldsStatus = "Loading..."; break;
                 case "wi": _incoming?.Add(new RemoteWorldInfo { id = (string)o["i"] ?? "", name = (string)o["n"] ?? "", day = (int?)o["d"] ?? 0 }); break;

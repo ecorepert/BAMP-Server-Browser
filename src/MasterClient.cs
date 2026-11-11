@@ -28,6 +28,8 @@ namespace BAMPServerBrowser
         public string language = "";
         /// <summary>false = partie vue récemment mais hors ligne (anciens masters : toujours true).</summary>
         public bool online = true;
+        /// <summary>Identifiant du monde (playthrough) hébergé, vide si inconnu.</summary>
+        public string worldId = "";
         /// <summary>Secondes depuis la dernière fois que la partie était en ligne (si hors ligne).</summary>
         public int offlineFor;
     }
@@ -60,6 +62,7 @@ namespace BAMPServerBrowser
         public bool hasPassword;
         public int day;
         public string language;
+        public string worldId;
     }
 
     /// <summary>Appels HTTP vers le master server (thread de fond, résultat via callback).</summary>

@@ -78,7 +78,7 @@ MAX_OFFLINE = 300
 OFFLINE_FILE = os.environ.get("BAMP_OFFLINE_FILE") or os.path.join(os.environ.get("STATE_DIRECTORY", "/var/lib/bamp-master"), "offline.json")
 _offline = {}       # cle -> dict public (sans token / ip)
 _PUBLIC_KEYS = ("name", "hostName", "description", "port", "steamId", "players", "maxPlayers", "inLobby",
-                "modVersion", "gameVersion", "hasPassword", "day", "language")
+                "modVersion", "gameVersion", "hasPassword", "day", "language", "worldId")
 
 
 def _server_key(s):
@@ -152,6 +152,7 @@ def _fields(body):
         "hasPassword": bool(body.get("hasPassword", False)),
         "day": _clean_int(body.get("day"), 0, 1000000, 0),
         "language": "".join(c for c in _clean_str(body.get("language"), 8).upper() if c.isalpha()),
+        "worldId": "".join(c for c in _clean_str(body.get("worldId"), 64) if c.isalnum()),
     }
 
 
@@ -372,7 +373,19 @@ class Handler(BaseHTTPRequestHandler):
                 lst = [_public(s, now) for s in _servers.values()]
                 if want_offline:
                     online_keys = {_server_key(s) for s in _servers.values()}
-                    lst += [_public_offline(s, now) for k, s in _offline.items() if k not in online_keys]
+                    online_worlds = {s.get("worldId") for s in _servers.values() if s.get("worldId")}
+                    # un meme monde relance par un autre hote : on ne garde que l'entree la plus recente
+                    newest = {}
+                    for k, s in _offline.items():
+                        if k in online_keys:
+                            continue
+                        w = s.get("worldId") or ""
+                        if w and w in online_worlds:
+                            continue
+                        dk = w or ("key:" + k)
+                        if dk not in newest or s["lastSeen"] > newest[dk]["lastSeen"]:
+                            newest[dk] = s
+                    lst += [_public_offline(s, now) for s in newest.values()]
             lst.sort(key=lambda s: (not s["online"], -s["players"], (s["name"] or "").lower()))
             return self._send(200, {"servers": lst, "ttl": TTL})
         self._send(404, {"error": "not found"})

@@ -54,7 +54,7 @@ namespace BAMPServerBrowser
         private string _editPw;
         private string _joinPw = "";
         private string _pwPromptKey = "";
-        private bool _pwPromptAdmin, _pwPromptIp;
+        private bool _pwPromptAdmin, _pwPromptIp, _pwPromptRelaunch;
         private string _editApw;
 
         // Champs texte maison : l'IMGUI ne reçoit pas le clavier dans ce jeu,
@@ -147,6 +147,8 @@ namespace BAMPServerBrowser
             try { port = MPServer.BoundPort; players = MPServer.ConnectedCount + 1; lobby = MPServer.IsInLobby; } catch { }
             int day = 0;
             try { day = SaveGameManager.Current?.Day ?? 0; } catch { }
+            string world = "";
+            try { world = MPSaveCoordinator.ActivePlaythroughId ?? ""; } catch { }
             string name = string.IsNullOrWhiteSpace(Cfg.serverName) ? (host.Length > 0 ? host + "'s game" : "Big Ambitions game") : Cfg.serverName.Trim();
             return new HostInfo
             {
@@ -163,6 +165,7 @@ namespace BAMPServerBrowser
                 hasPassword = JoinPassword.HostHasPassword,
                 day = day,
                 language = Cfg.language ?? "",
+                worldId = world,
             };
         }
 
@@ -310,6 +313,7 @@ namespace BAMPServerBrowser
             JoinPassword.LastRefused = false;
             string err = Bridge.Join(addr, port);
             if (err != null) { _joinMsg = err; return; }
+            AdminChannel.JoinedHostName = s.hostName ?? "";
             ModEntry.Info("join '" + s.name + "' via " + addr + (addr.StartsWith("steam:") ? "" : ":" + port));
             _joinMsg = "";
             _pwPromptKey = "";
@@ -525,7 +529,8 @@ namespace BAMPServerBrowser
                     string ver = s.modVersion == _bampVersion ? "" : $"  <color=#ff7a70>mod v{Esc(s.modVersion)}</color>";
                     line2 = $"{Esc(s.hostName)}  ·  {s.players}{max} player(s)  ·  {state}{dayTxt}{ver}";
                 }
-                else line2 = $"<color=#9aa3ad>{Esc(s.hostName)}  ·  Offline, last seen {Ago(s.offlineFor)}{dayTxt}</color>";
+                else line2 = $"<color=#9aa3ad>{Esc(s.hostName)}  ·  Offline, last seen {Ago(s.offlineFor)}{dayTxt}</color>"
+                             + (AdminChannel.GetRelaunch(s.worldId) != null ? "  ·  <color=#8fc3ff>you can relaunch it (admin)</color>" : "");
                 string name = s.online ? $"<b>{Esc(s.name)}</b>" : $"<b><color=#b8c0cc>{Esc(s.name)}</color></b>";
                 string label = $"{lang}{name}{(s.hasPassword ? "  <color=#ffd24a>[password]</color>" : "")}{(mine ? "  <color=#9ab>(you)</color>" : "")}\n<size=11>{line2}</size>";
                 if (GUILayout.Button(label, sel ? _rowSel : _row, GUILayout.Height(44)))
@@ -554,7 +559,31 @@ namespace BAMPServerBrowser
                 if (!cur.online)
                 {
                     string who = string.IsNullOrEmpty(cur.hostName) ? "the host" : Esc(cur.hostName);
-                    GUILayout.Label($"This game is offline (last seen {Ago(cur.offlineFor)}). You can join it once {who} starts hosting again.", _small);
+                    var rl = AdminChannel.GetRelaunch(cur.worldId);
+                    if (rl == null)
+                    {
+                        GUILayout.Label($"This game is offline (last seen {Ago(cur.offlineFor)}). Only {who} or an admin of this game can start it again.", _small);
+                        GUILayout.Label("<size=10>Admins: join this game once with the admin password while it is online, then you can relaunch it from here when it is offline.</size>", _small);
+                    }
+                    else if (_pwPromptKey == Key(cur) && _pwPromptRelaunch)
+                    {
+                        GUILayout.Label("Enter the admin password to relaunch this game on your PC. You become its host, with the same name and passwords:", _small);
+                        GUILayout.BeginHorizontal();
+                        GUILayout.Label("Admin password:", _small, GUILayout.Width(120));
+                        _joinPw = Field(6, _joinPw, 64, mask: true);
+                        GUILayout.EndHorizontal();
+                        GUILayout.BeginHorizontal();
+                        GUI.enabled = (_joinPw ?? "").Trim().Length > 0;
+                        if (GUILayout.Button("Relaunch the game", GUILayout.Height(34))) Relaunch(cur, rl);
+                        GUI.enabled = true;
+                        if (GUILayout.Button("Cancel", GUILayout.Height(34), GUILayout.Width(110))) { _pwPromptKey = ""; _joinPw = ""; _focus = 0; _joinMsg = ""; }
+                        GUILayout.EndHorizontal();
+                    }
+                    else
+                    {
+                        GUILayout.Label($"This game is offline (last seen {Ago(cur.offlineFor)}). As an admin, you can start it again on your PC with your copy of the world.", _small);
+                        if (GUILayout.Button("Relaunch as admin", GUILayout.Height(34))) { OpenPasswordPrompt(cur, admin: true, ip: false); _pwPromptRelaunch = true; }
+                    }
                 }
                 else
                 {
@@ -612,10 +641,60 @@ namespace BAMPServerBrowser
             GUI.DragWindow(new Rect(0, 0, 10000, 28));
         }
 
+        private static readonly MethodInfo LoadPickedSessionM = typeof(MPCanvasUI).GetMethod("LoadPickedSession", BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public);
+
+        /// <summary>Un admin relance sur son PC une partie hors ligne, avec sa copie du monde et les réglages de l'hôte.</summary>
+        private void Relaunch(ServerEntry s, AdminChannel.RelaunchInfo rl)
+        {
+            string pw = (_joinPw ?? "").Trim();
+            if (Hosting) { _joinMsg = "You are already hosting a game."; return; }
+            try { if (MPClient.IsConnected || MPClient.IsConnecting) { _joinMsg = "Leave the game you are in first."; return; } } catch { }
+            if (!Bridge.InMainMenu) { _joinMsg = "Go back to the main menu first."; return; }
+            if (!AdminChannel.CheckRelaunchPassword(rl, pw)) { _joinMsg = "Wrong admin password."; return; }
+
+            MPSaveManager.MpVariant pick = null;
+            try
+            {
+                pick = (MPSaveManager.ListPlaythroughs() ?? new List<MPSaveManager.MpPlaythrough>())
+                    .SelectMany(p => p.Variants ?? new List<MPSaveManager.MpVariant>())
+                    .Where(v => string.Equals(v.PlaythroughId, rl.worldId, StringComparison.OrdinalIgnoreCase) && !string.IsNullOrEmpty(v.SessionName))
+                    .OrderByDescending(v => v.SavedAtUnix).FirstOrDefault();
+            }
+            catch (Exception ex) { ModEntry.Warn("relaunch: " + ex.Message); }
+            if (pick == null)
+            {
+                _joinMsg = "This world is not on your PC yet. It arrives with the shared saves after you have played it (go back to the main menu once after playing so it can sync).";
+                return;
+            }
+            var ui = MPCanvasUI.Instance;
+            if (ui == null || LoadPickedSessionM == null) { _joinMsg = "Multiplayer mod not found or incompatible version."; return; }
+
+            // réglages de la partie d'origine (mêmes nom et mots de passe)
+            if (!string.IsNullOrWhiteSpace(rl.name)) Cfg.serverName = rl.name;
+            Cfg.description = rl.desc ?? "";
+            if (Array.IndexOf(BrowserConfig.Languages, rl.lang) >= 0) Cfg.language = rl.lang;
+            if (rl.max >= 2 && rl.max <= 32) Cfg.maxPlayers = rl.max;
+            Cfg.joinPassword = rl.playerPassword ?? "";
+            Cfg.adminPassword = pw;
+            Cfg.publish = true;
+            BrowserConfig.Save();
+            _editName = Cfg.serverName; _editDesc = Cfg.description; _editPw = Cfg.joinPassword; _editApw = Cfg.adminPassword;
+            try
+            {
+                LoadPickedSessionM.Invoke(ui, new object[] { pick.SessionName, pick.PlaythroughId ?? "" });
+                ModEntry.Info($"[Admin] relaunching '{s.name}' (world {rl.worldId}, local copy day {pick.Day}).");
+                _joinMsg = "";
+                _pwPromptKey = ""; _joinPw = ""; _focus = 0;
+                _show = false; _autoShown = false;
+            }
+            catch (Exception ex) { _joinMsg = "Could not start the game: " + (ex.InnerException ?? ex).Message; }
+        }
+
         private void OpenPasswordPrompt(ServerEntry s, bool admin, bool ip)
         {
             _pwPromptKey = Key(s);
             _pwPromptAdmin = admin;
+            _pwPromptRelaunch = false;
             _pwPromptIp = ip;
             _joinPw = "";
             _joinMsg = "";
