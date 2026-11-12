@@ -1,12 +1,16 @@
 # BAMP Server Browser
 
 An add-on for **[Going Public: Multiplayer for Big Ambitions](https://steamcommunity.com/sharedfiles/filedetails/?id=3765662670)**
-that adds a **public server list**, **optional player and admin passwords**, **shared world saves** (on the host's PC
-or on your own private VPS) and an **automatic headless host mode**.
+(the "base mod" below). It adds a **public game list**, **player and admin passwords**, **remote admin tools**,
+**shared world saves** and an **automatic headless host**.
 
-It is a separate mod: **it does not modify the game or the original multiplayer mod**. It reads the
-multiplayer mod's public state, drives its "Join a Game" dialog through reflection, and hooks a few
-methods in memory (Harmony, provided by the base mod) for the join password.
+It is a separate mod: **it does not modify the game or the base mod's files**. It uses the base mod's public API,
+a few reflection calls on its UI, and a handful of in-memory hooks (Harmony, shipped with the base mod). The full
+list is in [For the Going Public developer](#for-the-going-public-developer).
+
+- Mod version: **1.3.5** (C#, .NET Framework 4.8, `src/`)
+- Tested with: **Going Public v0.3.3** on Big Ambitions (Steam, Windows)
+- Server side: `master/master.py`, Python 3 standard library only (list server, optional save storage)
 
 ---
 
@@ -14,42 +18,38 @@ methods in memory (Harmony, provided by the base mod) for the join password.
 
 | Feature | What it does |
 |---|---|
-| **Server list** | Every hosted game can be published to a public list. Players pick a game and click *Join* — no IP to type. Joins through the **Steam relay** by default (no port forwarding), or by IP:port. Games seen in the last 7 days stay listed when offline (green dot = online, grey = offline). Filter by language, *Online only*, *Favorites only*, *Hide games with a password*, search by name, and sort by status, name, day, players or language. Selecting a game shows its **difficulty settings**, the **names of the connected players** and the **ping**. |
-| **Favorites** | *Add to favorites* on any game; favorites are listed first and you get a notification when one comes online. |
-| **Update check** | Once per launch the mod asks the game list server (`/api/version`) whether a newer version is published, shows a banner and a *Download* button (`/download/BAMPServerBrowser.dll` on that same server). Nothing comes from GitHub. |
-| **Publish panel** | While hosting: show/hide the game in the list, name, description, language, max players, player password, admin password. The entry shows the language tag (e.g. **[FR]**), *Lobby* / *In game*, the in-game day, player count and mod version. |
-| **Player & admin passwords** | Both empty by default (anyone can join, no admin). With a **player password** the game is marked **[password]**, the password is asked right after clicking *Join*, and the host refuses anyone without it; players who give it automatically receive the host's shared saves. Whoever joins with the **admin password** gets a *Manage this game* window: change name, description, language, max players, passwords, public listing, and delete shared saves (the host executes; the group admin key never leaves the host's PC). |
-| **Shared world saves** | The latest version of each multiplayer world is kept on the group's save server, so any member can host the up-to-date world. Default: the host's own PC. Option: your own private VPS. |
-| **Shared code & admin key** | Created automatically, nothing to type: the host hands its shared-saves code to players who join with a password. Only the host's admin key can delete saves. |
-| **Headless host** | Runs the game with no window and no sound, hosts automatically, accepts players, autosaves, and offers a console (`status`, `players`, `say`, `save`, `stop`). |
+| **Game list** | Hosted games are published to a public list. Pick a game and click *Join*: no IP to type. Joins through the **Steam relay** by default (no port forwarding) or by IP:port. |
+| **Offline games** | Games seen in the last 7 days stay listed when offline (green dot = online, grey = offline). |
+| **Filters & sorting** | Search by name; filter by language, *Online only*, *Favorites only*, *Hide games with a password*; sort by status, name, in-game day, players or language. |
+| **Game details** | Difficulty settings (difficulty, starting money, tax, days per year, multipliers, disabled needs…), connected player names, ping, host's mod version. |
+| **Favorites** | Favorites are listed first; a notification appears when one comes online. |
+| **Passwords** | Optional **player password** (asked right after *Join*) and **admin password**. Players who give a password automatically receive the shared save of that world. |
+| **Admin tools** | Joining with the admin password opens *Manage this game*: player list, kick, ban/unban (base mod's ban list), message to everyone, save now, game settings (name, description, language, max players, passwords, public listing), shared saves and their trash (restore within 30 days). The host gets the same window from *Publish my game → Players & tools*. |
+| **Relaunch offline games** | The host can *Host this game again* from the list. An admin who joined once can *Relaunch as admin* (admin password checked) with the same name and passwords. |
+| **Shared world saves** | Each world syncs with the save server of its host: the host's PC (default) or the host's own VPS. Chosen when clicking *Host New Game*. |
+| **Update check** | At launch, the mod asks the game list server (`/api/version`) and offers a *Download* button served by that same server. |
+| **Headless host** | Runs the game with no window and no sound, hosts automatically, accepts players, autosaves; console with `status`, `players`, `say`, `save`, `stop`. |
 
 ---
 
 ## Requirements
 
-- **Big Ambitions** (Steam), with the official mod loader.
-- **Going Public: Multiplayer for Big Ambitions** — subscribe on the Steam Workshop
-  (tested with **v0.3.3**). This add-on does not work without it: the game's mod loader loads the
-  multiplayer mod first, then this one.
-- For the optional private save server: any Linux VPS with **python3** and systemd.
-
----
+- **Big Ambitions** (Steam) with its official mod loader.
+- **Going Public: Multiplayer for Big Ambitions** (Steam Workshop). The game loads it first, then this add-on.
+- Optional, for a save server that is always on: a Linux VPS with **python3** and systemd.
 
 ## Installation (every player)
 
-1. Subscribe to *Going Public: Multiplayer for Big Ambitions* on the Workshop and launch the game once.
-2. Download `BAMPServerBrowser.dll` (from the [`dist/`](dist/) folder or the Releases page).
-3. Create this folder and put the DLL in it (it must be the **only** DLL in the folder):
+1. Subscribe to *Going Public* on the Workshop and launch the game once.
+2. Get `BAMPServerBrowser.dll`: the game list server publishes it at `/download/BAMPServerBrowser.dll`
+   (the mod's *Download* button), or build it from `src/` (see [Building](#building)).
+3. Put it, game closed, as the **only** DLL in:
 
    ```
    %USERPROFILE%\AppData\LocalLow\Hovgaard Games\Big Ambitions\ModsLocal\BAMPServerBrowser\
    ```
 
-4. Start the game. The mod's settings are created in:
-
-   ```
-   %USERPROFILE%\AppData\LocalLow\Hovgaard Games\Big Ambitions\BAMPServerBrowser\config.json
-   ```
+4. Start the game. Settings are created in `…\Big Ambitions\BAMPServerBrowser\config.json`.
 
 To uninstall, delete the `ModsLocal\BAMPServerBrowser` folder.
 
@@ -57,95 +57,62 @@ To uninstall, delete the `ModsLocal\BAMPServerBrowser` folder.
 
 ## How to use
 
-- **Join**: *Multiplayer > Join Game*. The server list opens next to the dialog.
-  Double-click a game or use *Join* (*Join by IP* if you prefer IP:port). If the game shows **[password]**,
-  the password is asked right after *Join* (player password, or admin password for admin rights). For an
-  open game, *Join as admin* asks for the admin password.
-- **Admin**: once connected with the admin password, press **F9** → *Manage this game*: players (kick, ban,
-  unban), message to everyone, save now, game settings, shared saves and their **trash** (restore within 30 days).
-  The host gets the same window from *Publish my game* → *Players & tools*.
-- **Host your own offline game again**: select it in the list (marked *(you)*) → *Host this game again*: the
-  lobby opens with your latest save of that world.
-- **Relaunch an offline game (admin only)**: an admin who joined the game once with the admin password
-  can restart it when it is offline: select it in the list → *Relaunch as admin* → admin password. Their PC
-  hosts its copy of the world (from the shared saves) with the same name, description, language and passwords.
-- **Host**: *Host New Game* or *Host Saved Game*. *Host New Game* first asks **where to store the shared
-  saves**: *This PC* (default, with its port) or *My own server* (address pre-filled from your config and the
-  servers you used before, with a *Test* button, and the ready-to-paste command that **sends the save server
-  files from your PC and installs them on your VPS** (scp + ssh) with a *Copy* button). The **Publish my game** panel appears in the lobby; its
-  *Change* button opens the same choice later. The headless server is never asked.
-- **F9**: show/hide the list at any time (joining needs the main menu).
+- **Join**: *Multiplayer → Join Game* (the list opens next to the dialog), or **F9** at any time. Select a game,
+  then *Join* (or double-click). If it shows **[password]**, the password is asked right after *Join*; give the
+  admin password to get admin rights. For an open game, *Join as admin* asks for the admin password.
+- **Host**: *Host New Game* first asks **where to store the shared saves** (see below), then the base mod's lobby
+  opens with the **Publish my game** panel: public listing, name, description, language, max players, player and
+  admin passwords, save server (*Change*), *Players & tools*.
+- **Admin**: connected with the admin password, press **F9 → Manage this game**.
+- **Offline games**: select one → *Host this game again* (your own game) or *Relaunch as admin*.
 - Panels can be dragged by their title bar.
 
 ---
 
-## Saves: where they live
+## Shared saves
 
-The public list server **stores no saves**; it only lists games. Each group chooses where its saves go.
+The game list server only lists games. Saves are stored by **the host's save server**:
 
-### Default — on the host's PC (nothing to install)
+- **This PC** (default): while the game runs, the host's PC serves its saves on **TCP 8788** (forward this port on
+  the router for friends). When the PC is off, friends keep their last copy.
+- **My own server**: a VPS running `master.py` with storage on. In *Host New Game → My own server*, type the VPS
+  address and click **Copy**: the copied PowerShell line sends `master.py` and `install.sh` **from your PC**
+  (they are embedded in the mod) with `scp`, then runs the installer with `ssh`. Nothing is downloaded from the
+  internet. Then click *Test*.
 
-- While the game runs, the host's PC serves the group's saves on **TCP port 8788**.
-- Friends who join with the **player password** (or the admin password) automatically receive the shared-saves
-  code **of that world only** (`groupe-…@HOST_PUBLIC_IP:8788`, stored in `joinedWorlds`). Only that world then
-  syncs with the host's PC; the friend's own worlds stay in the friend's own group and are never sent to the
-  host. A host can't claim a world that is already on the friend's PC unless it hosted it. Games without a
-  player password never hand out the code.
-- The save server on the host's PC only accepts the host's own group code and stores at most 2 GB in total.
-- Downloaded worlds are checked: invalid world ids, paths leaving the save folder, executable files and
-  oversized archives are refused.
-- One-time setup on the host's router: **forward TCP 8788** to the host's PC, and allow Big Ambitions in
-  the Windows firewall when asked.
-- When the host's PC is off, friends keep the copy they already have but cannot get a newer one.
+  ```
+  scp "<…>\BAMPServerBrowser\vps-install\master.py" "<…>\vps-install\install.sh" root@VPS:/tmp/ ; ssh -t root@VPS "cd /tmp && sudo sh install.sh 8787"
+  ```
 
-### Option — on your own private VPS (the host's PC can be off)
+How it works:
 
-Easiest: in the game, *Host New Game* → *My own server* → type the VPS address → **Copy** the command and
-paste it in PowerShell on your PC (Debian/Ubuntu or any systemd Linux with python3). The server files
-(`master.py`, `install.sh`) are **embedded in the mod**: the command sends them from your PC with `scp`, then
-runs the installer with `ssh`. Nothing is downloaded from the internet. It looks like:
+1. When a player joins with a password, the host sends the save code of **that world only**
+   (`group-key@host:port`). Only that world then syncs with the host's server; the player's own worlds stay in
+   the player's own group and are never sent. A host can't claim a world already on the player's PC unless it
+   hosted it.
+2. While hosting, changed saves are uploaded every 30 s; in the main menu everything syncs every 90 s.
+   The most recent save wins. Before a local copy is replaced, the old one goes to
+   `SaveGames\_BAMP_MP\_BAMPServerBrowser_backups\` (3 kept).
+3. Only the host's admin key can delete a world (server trash for 30 days, restorable). The save server keeps
+   the 10 previous versions of each world.
 
-```bash
-scp "C:\Users\YOU\AppData\LocalLow\Hovgaard Games\Big Ambitions\BAMPServerBrowser\vps-install\master.py" "C:\Users\YOU\AppData\LocalLow\Hovgaard Games\Big Ambitions\BAMPServerBrowser\vps-install\install.sh" root@YOUR_VPS:/tmp/ ; ssh -t root@YOUR_VPS "cd /tmp && sudo sh install.sh 8787"
+Safety: the built-in save server only accepts its owner's group code and stores at most 2 GB. Downloaded worlds
+are checked (hex world ids only, no path leaving the save folder, no `.dll/.exe/scripts`, size limits).
+
+---
+
+## Headless host (optional)
+
+```
+server\start-server.bat
 ```
 
-Or by hand, on the VPS, in a folder that contains `master.py` and `install.sh`:
-
-```bash
-sudo sh install.sh              # port 8787
-sudo sh install.sh 9000         # or another port
-```
-
-The script installs a hardened systemd service (`bamp-master`), opens the port in `ufw` if it is
-active, and prints the exact line to use. Then, **game closed**, edit the admin's `config.json`:
-
-```json
-"worldsUrl": "http://YOUR_VPS_IP:8787"
-```
-
-Start the game: the code to give your friends becomes `groupe-xxxx@YOUR_VPS_IP:8787`. Friends only paste
-that code — no file to edit. The admin's local worlds are uploaded on the next sync, and the admin key is
-registered by the VPS on first connection.
-
-If your hosting provider has its own firewall, open the port there as well. Check the service with
-`systemctl status bamp-master` and `journalctl -u bamp-master -f`.
-
-### How syncing works
-
-1. While hosting, the world is uploaded after every save (checked every 30 s) and once more back in the menu.
-2. In the main menu (at launch, every 90 s, or *Sync now*), newer worlds are downloaded and newer local
-   worlds are uploaded.
-3. To play the shared world: *Multiplayer > Host Saved Game*.
-
-### Safety rules
-
-- No group code → no access. Seeing a game in the public list gives no access to its saves.
-- Only the **admin key** can delete a world (it goes to the server trash for 30 days). A member who deletes
-  a world locally only removes it from their own PC.
-- The save server keeps the **10 previous versions** of each world. Before a local copy is replaced, the old
-  one is moved to `SaveGames\_BAMP_MP\_BAMPServerBrowser_backups\`.
-- Conflict rule: the most recent save wins.
-- Never share `adminKey` or your whole `config.json`; share only the group code.
+- Console commands: `status`, `players`, `say <message>`, `save`, `stop` (Ctrl+C = `stop`); `server\stop-server.bat`
+  also stops it cleanly. Remote admins use *Manage this game* as with any host.
+- Uses `%USERPROFILE%\BigAmbitionsServer` (executable copy + junctions) so the server has its own identity.
+- Settings: `BAMPServerBrowser\dedicated.json` (`mode` auto/new/load, `save`, `startDelaySeconds`, `autoAccept`,
+  `autosaveMinutes`, `targetFps`, `statusLogSeconds`, `mute`).
+- Steam must run with an account that owns the game (one running game per account).
 
 ---
 
@@ -153,51 +120,83 @@ If your hosting provider has its own firewall, open the port there as well. Chec
 
 | Key | Default | Purpose |
 |---|---|---|
-| `masterUrl` | public list server | Server list address |
-| `publish` | `true` | Publish your hosted games in the list |
-| `serverName`, `description` | `""` | Shown in the list |
-| `joinPassword` | `""` | Player password to join your hosted game (empty = open) |
-| `adminPassword` | `""` | Admin password: joining with it gives the *Manage this game* window (empty = no remote admin) |
-| `favorites` | `[]` | Favorite games (`steam:<id>` or `ip:<address>:<port>`) |
-| `notifyFavorites` | `true` | Notification when a favorite comes online |
-| `listHidePassword` | `false` | Hide games with a password in the list |
-| `checkUpdates` | `true` | Ask the game list server for a newer version at launch |
-| `askSaveServerOnNewGame` | `true` | Ask where to store the shared saves on *Host New Game* |
-| `saveServerHistory` | `[]` | Save servers used before (pre-filled in that question) |
-| `sshUser` | `root` | SSH user used in the VPS install command |
-
-Passwords, the admin key and shared-saves codes are **encrypted with Windows (DPAPI)** in `config.json` and
-`relaunch.json`: only your Windows account on this PC can read them. Old plain-text values are still read and
-are encrypted on the next save. A `config.json` copied to another PC loses these values (they are recreated).
-| `language` | system language | Language shown for your hosted game in the list (`EN`, `FR`, `DE`…) |
-| `maxPlayers` | `8` | Shown in the list |
-| `toggleKey` | `F9` | Show/hide the list |
-| `preferSteam` | `true` | Join through the Steam relay when possible |
-| `shareKey` | generated | Shared-saves code (`code` or `code@host:port` from a friend) |
-| `adminKey` | generated | Admin key for deleting worlds — keep it private |
-| `worldsUrl` | `""` | Private VPS save server; empty = the host's PC |
+| `masterUrl` | public list server | Game list server address (also used for the update check) |
+| `publish` | `true` | Publish hosted games in the list |
+| `serverName`, `description`, `language`, `maxPlayers` | `""`, `""`, system language, `8` | Shown in the list |
+| `joinPassword`, `adminPassword` | `""` | Player / admin passwords of your hosted games |
+| `shareKey`, `adminKey` | generated | Your save group code and its admin key |
+| `worldsUrl` | `""` | Your own save server; empty = this PC |
 | `localStoragePort` | `8788` | Port of the save server built into the game |
+| `joinedWorlds` | `{}` | Worlds received from other hosts (world id → their save code) |
+| `askSaveServerOnNewGame`, `saveServerHistory`, `sshUser` | `true`, `[]`, `root` | *Host New Game* save server question |
+| `favorites`, `notifyFavorites` | `[]`, `true` | Favorite games and their notification |
+| `listOnlineOnly`, `listFavoritesOnly`, `listHidePassword`, `listLanguage`, `listSort`, `listSortDesc` | | List filters and sorting |
+| `checkUpdates` | `true` | Ask the list server for a newer version at launch |
+| `toggleKey`, `preferSteam` | `F9`, `true` | List hotkey; join through the Steam relay when possible |
 
-Deleting `config.json` recreates it with defaults (and a **new** group code) on the next launch.
+Passwords, keys and save codes are **encrypted with Windows DPAPI** in `config.json` and `relaunch.json` (only this
+Windows account on this PC can read them; old plain-text values are still read, then encrypted).
 
 ---
 
-## Headless host (optional)
+## For the Going Public developer
 
-Runs Big Ambitions as an automatic host with no window and no sound, from a console.
+This add-on depends entirely on the base mod. Below is everything it touches, so that a base mod update does
+not break it silently, and a short wishlist of APIs that would let it drop its hooks.
 
-```
-server\start-server.bat
-```
+### Harmony prefixes
 
-- Commands: `status`, `players`, `say <message>`, `save`, `stop` (Ctrl+C = `stop`). `server\stop-server.bat` also stops it cleanly.
-- It uses a separate folder (`%USERPROFILE%\BigAmbitionsServer`: executable copy + junctions, a few MB) so the
-  server has its own multiplayer identity.
-- Settings in `BAMPServerBrowser\dedicated.json`: `mode` (`auto`/`new`/`load`), `save`, `startDelaySeconds`,
-  `autoAccept`, `autosaveMinutes`, `targetFps`, `statusLogSeconds`, `mute`.
-- **Steam must be running and signed in with an account that owns the game.** Steam allows one running game
-  per account, so to play at the same time the server needs **another machine and another Steam account
-  that owns the game**. Needs ~4 GB RAM, no graphics card. Windows only (Linux untested via Proton).
+| Target | Why |
+|---|---|
+| `MPServer.HandleHello(MPLink, MessageEnvelope)` | Check the player/admin password hash in the Hello; refuse with `peer.Disconnect("BAMP:password")`; record the player's role. |
+| `MPClient.Send(MessageEnvelope)` | Add `bsbPw` (password hash) and `bsbV` (add-on present) to the outgoing Hello. |
+| `MPClient.OnDisconnected(string, byte[])` | Detect `BAMP:password` (wrong password) and `BAMP:kicked` (kicked by an admin). |
+| `MPChat.AddMessage(string, string, string)` | Swallow the add-on's hidden messages (private chat lines starting with `~bsb1~` + JSON). |
+| `MPServer.SendChatPrivate(string, string, string)` | Never relay a tagged message that does not come from the host. |
+| `MPServer.Broadcast(MessageEnvelope)` | Never broadcast a tagged chat message. |
+| `MPCanvasUI.OnMpHostNew()` | Ask where to store shared saves before the lobby opens (skipped by the headless host). |
+
+### Reflection (non-public members)
+
+`MPCanvasUI`: `_joinDialog`, `_joinIp`, `_joinPort`, `OnMpJoin`, `OnJoinConnect` (fill and submit *Join a Game*),
+`_mpButton`, `_mpSubmenu` (menu state), `OnMpHostNew`, `LoadPickedSession(session, pid)`, `OnLobbyStart`
+(headless host, relaunch), `_hostSettings` (difficulty while in the lobby).
+`MPServer.PeerForPid` (kick an in-game player), `MPServer.ConnectedPids`, `MyPluginInfo.PLUGIN_VERSION`.
+
+### Public API used
+
+`MPServer`: `IsRunning`, `IsInLobby`, `BoundPort`, `ConnectedCount`, `ConnectedClientPeers`, `DisplayNameFor`,
+`BanPlayer`, `UnbanPlayer`, `BanList`, `KickFromLobby`, `BroadcastChat`, `SendChatPrivate`, `DtoFromGameVariables`,
+`PendingJoinList`, `AcceptPendingJoin`, `HostSnapshotsReady`, `Stop`. `MPClient`: `IsConnected`, `IsConnecting`,
+`SendChat`. `MPConfig.PlayerId`, `MPChat.AddMessage`, `MPNet.PublicIp` / `FetchPublicIpAsync`,
+`MPSaveManager.ListPlaythroughs` / `MpVersionFolder`, `MPSaveCoordinator.ActivePlaythroughId` / `HostSaveNow` /
+`HostSaveSync`, `MPCanvasUI.Instance`.
+
+### Hidden message channel
+
+Host ↔ player messages ride on private chat (`SendChatPrivate` / `SendChat`, sender checked by the base mod's
+`SenderIs`), text `~bsb1~{json}` (≤ 200 chars, the base mod's chat limit).
+Host → player: `w` role, `s` save code of the current world, `g`/`gd` settings, `rl`/`rp` relaunch info, `r` result,
+`w0/wi/w1/we` saves and trash, `p0/pi/p1` players, `b0/bi/b1` bans.
+Player → host (admins only): `get`, `set`, `del`, `rs` (restore), `pl`, `kick`, `ban`, `unban`, `msg`, `save`.
+
+### Wishlist (would remove most hooks)
+
+1. A Hello extension point: extra fields from client mods, and a host callback that can accept or refuse with a
+   reason shown to the player (replaces the 3 password hooks).
+2. A mod-to-mod message channel (custom type + payload) instead of tagged private chat.
+3. Public calls for *Host New Game*, *Host Saved Game (session, playthrough id)*, *Start lobby* and
+   *Join (address, port)* instead of reflection on `MPCanvasUI`.
+4. An in-game kick (`KickFromLobby` only covers the lobby).
+5. Events: player joined/left, world loaded (playthrough id), current game settings.
+
+### Observed issue (base mod v0.3.3)
+
+Sometimes the host stays on *"Waiting for all players to finish loading… Auto-start in 3:00"* while alone. Log:
+`[TimeSync] Startup release received BEFORE the hold began — remembered…`, then
+`[TimeSync] Startup hold SKIPPED — the release for this load already arrived`, and the
+`[FreezeGate] host soft-hold ENGAGED` is never followed by `RELEASED` (normally `soft-hold RELEASED (startup hold released)`).
+The skipped hold seems to leave the soft-hold engaged until the 180 s fallback.
 
 ---
 
@@ -205,11 +204,11 @@ server\start-server.bat
 
 | Path | Content |
 |---|---|
-| `src/` | Mod source (C#, .NET Framework 4.8) |
-| `dist/BAMPServerBrowser.dll` | Ready-to-use build |
-| `master/master.py` | List + save server (Python 3, standard library only) |
-| `master/install.sh` | Installs the save server on a private VPS |
-| `master/bamp-master.service` | systemd unit used for a **list-only** server (`BAMP_WORLDS=0`) |
+| `src/` | Mod source (C#). `ServerBrowser.cs` UI, `AdminChannel.cs` admin/messages, `JoinPassword.cs` passwords, `WorldSync.cs` + `LocalWorldStore.cs` shared saves, `SaveServerPrompt.cs` save server choice, `DedicatedHost.cs` headless host, `SecretBox.cs` DPAPI, `GameInfo.cs` difficulty/players/update check |
+| `master/master.py` | Game list server + optional save storage + mod publication |
+| `master/install.sh` | Installs `master.py` as a hardened systemd service (embedded in the mod too) |
+| `master/bamp-master.service` | systemd unit for a **list-only** server (`BAMP_WORLDS=0`) |
+| `master/version.json` | Version published by the list server (`/api/version`) |
 | `server/` | Headless host console scripts |
 
 ### Building
@@ -218,38 +217,35 @@ server\start-server.bat
 dotnet build src/BAMPServerBrowser.csproj -c Release
 ```
 
-The project references the game's `Managed` DLLs and the multiplayer mod's DLLs from their default Steam
-paths (override with `-p:GameDir=...` and `-p:BampDir=...`). They are used as references only and are
-not redistributed.
+References the game's `Managed` DLLs and the base mod's DLLs from their default Steam paths (override with
+`-p:GameDir=...` and `-p:BampDir=...`); they are not redistributed. Output: `src/bin/Release/net48/BAMPServerBrowser.dll`.
 
-### Server API (`master.py`)
+### Server (`master.py`)
 
 | Method | Path | Purpose |
 |---|---|---|
-| GET | `/api/servers` | Public game list (online games only) |
-| POST | `/api/worlds/<id>/restore` | (admin key) Take a world out of the trash |
+| GET | `/api/servers` | Online games |
+| GET | `/api/servers?offline=1` | Same + games seen in the last 7 days (`online: false`, `offlineFor`, no IP; one entry per world) |
+| POST | `/api/servers` | Register a game → `{id, token}` |
+| POST / DELETE | `/api/servers/<id>` | Heartbeat / unregister (`X-Token`) |
+| GET | `/api/worlds` | Worlds of a group (`X-Share-Key`) |
+| GET / PUT | `/api/worlds/<id>` | Download / upload a world |
+| DELETE | `/api/worlds/<id>` | Move to trash (`X-Admin-Key`) |
+| POST | `/api/worlds/<id>/restore` | Restore from trash (`X-Admin-Key`) |
 | GET | `/api/version` | Published mod version (`version.json` next to `master.py`) |
 | GET | `/download/BAMPServerBrowser.dll` | Published mod file (next to `master.py`) |
-| GET | `/api/servers?offline=1` | Same, plus games seen in the last 7 days that are offline (`online: false`, `offlineFor` in seconds, no IP). A world relaunched by another host (same `worldId`) is listed once. |
-| POST | `/api/servers` | Register a game → `{id, token}` (IP taken from the connection) |
-| POST / DELETE | `/api/servers/<id>` | Heartbeat / remove (`X-Token`) |
-| GET | `/api/worlds` | Group worlds (`X-Share-Key`) |
-| GET / PUT | `/api/worlds/<id>` | Download / upload a world version |
-| DELETE | `/api/worlds/<id>` | Move to trash (`X-Admin-Key`) |
 
-`BAMP_WORLDS=0` makes it a list-only server. Built-in limits: 120 requests/min per IP, 5 listed games per IP,
-4 KB list entries, 64 MB per world, 20 worlds per group.
+Environment: `BAMP_MASTER_HOST`, `BAMP_MASTER_PORT` (8787), `BAMP_WORLDS=0` (list only), `BAMP_WORLDS_DIR`,
+`BAMP_OFFLINE_FILE`, `BAMP_DIST_DIR`, `BAMP_TRUST_PROXY=1` (behind a reverse proxy). Limits: 120 requests/min per
+IP, 5 listed games per IP, 500 games, 75 s heartbeat timeout, 64 MB per world, 20 worlds per group.
+
+**Publishing an update**: copy the new `BAMPServerBrowser.dll` and `master/version.json` (new number) next to
+`master.py` on the list server, then restart it; every player sees the update at the next launch.
 
 ---
 
 ## Credits
 
-- *Going Public: Multiplayer for Big Ambitions* and its authors — this add-on depends on it entirely.
-- *Big Ambitions* by Hovgaard Games.
-- Not affiliated with Hovgaard Games or the multiplayer mod authors.
-
-### Publishing an update for the players
-
-Put `master/version.json` (with the new version number) and `dist/BAMPServerBrowser.dll` next to `master.py` on
-the game list server (`/opt/bamp-master/`), then restart it. Every player's mod sees the new version at its next
-launch and gets a *Download* button. (`install.sh` also copies these two files when they are in its folder.)
+- *Going Public: Multiplayer for Big Ambitions* and its authors: this add-on depends on it entirely.
+- *Big Ambitions* by Hovgaard Games. Not affiliated with Hovgaard Games or the base mod's authors.
+- MIT License (see `LICENSE`).
