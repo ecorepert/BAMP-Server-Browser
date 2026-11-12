@@ -71,8 +71,8 @@ To uninstall, delete the `ModsLocal\BAMPServerBrowser` folder.
   hosts its copy of the world (from the shared saves) with the same name, description, language and passwords.
 - **Host**: *Host New Game* or *Host Saved Game*. *Host New Game* first asks **where to store the shared
   saves**: *This PC* (default, with its port) or *My own server* (address pre-filled from your config and the
-  servers you used before, with a *Test* button, and the ready-to-paste **SSH command that installs the save
-  server on your VPS** with a *Copy* button). The **Publish my game** panel appears in the lobby; its
+  servers you used before, with a *Test* button, and the ready-to-paste command that **sends the save server
+  files from your PC and installs them on your VPS** (scp + ssh) with a *Copy* button). The **Publish my game** panel appears in the lobby; its
   *Change* button opens the same choice later. The headless server is never asked.
 - **F9**: show/hide the list at any time (joining needs the main menu).
 - Panels can be dragged by their title bar.
@@ -101,18 +101,19 @@ The public list server **stores no saves**; it only lists games. Each group choo
 ### Option — on your own private VPS (the host's PC can be off)
 
 Easiest: in the game, *Host New Game* → *My own server* → type the VPS address → **Copy** the command and
-paste it in PowerShell on your PC. It is this one line (Debian/Ubuntu or any systemd Linux with python3 and curl):
+paste it in PowerShell on your PC (Debian/Ubuntu or any systemd Linux with python3). The server files
+(`master.py`, `install.sh`) are **embedded in the mod**: the command sends them from your PC with `scp`, then
+runs the installer with `ssh`. Nothing is downloaded from the internet. It looks like:
 
 ```bash
-ssh -t root@YOUR_VPS "curl -fsSL https://github.com/ecorepert/BAMP-Server-Browser/raw/main/master/install.sh -o /tmp/bamp-install.sh && sudo sh /tmp/bamp-install.sh 8787 latest"
+scp "%LOCALAPPDATA%Low\Hovgaard Games\Big Ambitions\BAMPServerBrowserps-install\master.py" "…\install.sh" root@YOUR_VPS:/tmp/ ; ssh -t root@YOUR_VPS "cd /tmp && sudo sh install.sh 8787"
 ```
 
-Or by hand, on the VPS, in a folder that contains `master/master.py` and `master/install.sh`:
+Or by hand, on the VPS, in a folder that contains `master.py` and `install.sh`:
 
 ```bash
 sudo sh install.sh              # port 8787
 sudo sh install.sh 9000         # or another port
-sudo sh install.sh 8787 latest  # download the latest master.py from GitHub first
 ```
 
 The script installs a hardened systemd service (`bamp-master`), opens the port in `ufw` if it is

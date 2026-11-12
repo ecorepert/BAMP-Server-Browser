@@ -1095,12 +1095,11 @@ namespace BAMPServerBrowser
         private bool _ssTestOk, _ssTesting, _ssDontAsk;
         private string _ssUser = "";
         private float _ssCopiedAt = -100f;
-        private const string InstallScriptUrl = "https://github.com/ecorepert/BAMP-Server-Browser/raw/main/master/install.sh";
+        private string _vpsFilesDir = "";
 
         /// <summary>
-        /// Commande à coller dans un terminal du PC (PowerShell) : se connecte au VPS en SSH, télécharge
-        /// install.sh depuis GitHub (qui récupère lui-même le dernier master.py) et installe le serveur
-        /// de sauvegardes sur le port de l'adresse.
+        /// Commande à coller dans un terminal du PC (PowerShell) : envoie master.py et install.sh DEPUIS CE PC (fichiers
+        /// embarqués dans le mod, scp) puis lance l'installation (ssh). Rien n'est téléchargé depuis internet.
         /// </summary>
         private string VpsInstallCommand(out bool hasHost, out bool portGiven, out int port)
         {
@@ -1114,7 +1113,9 @@ namespace BAMPServerBrowser
             }
             string user = new string((_ssUser ?? "").Trim().Where(c => char.IsLetterOrDigit(c) || c == '.' || c == '_' || c == '-').ToArray());
             if (user.Length == 0) user = "root";
-            return $"ssh -t {user}@{host} \"curl -fsSL {InstallScriptUrl} -o /tmp/bamp-install.sh && sudo sh /tmp/bamp-install.sh {port} latest\"";
+            if (_vpsFilesDir.Length == 0) _vpsFilesDir = SaveServerPrompt.ExtractVpsFiles();
+            string dir = _vpsFilesDir.Length > 0 ? _vpsFilesDir : "FILES_NOT_FOUND";
+            return $"scp \"{dir}\\master.py\" \"{dir}\\install.sh\" {user}@{host}:/tmp/ ; ssh -t {user}@{host} \"cd /tmp && sudo sh install.sh {port}\"";
         }
 
         private void OpenSaveServerDialog(MPCanvasUI hostNewUi)
@@ -1128,6 +1129,7 @@ namespace BAMPServerBrowser
             _ssTest = ""; _ssTestOk = false; _ssTesting = false;
             _ssDontAsk = !Cfg.askSaveServerOnNewGame;
             _ssUser = string.IsNullOrWhiteSpace(Cfg.sshUser) ? "root" : Cfg.sshUser;
+            _vpsFilesDir = SaveServerPrompt.ExtractVpsFiles();
             _saveDlgPlaced = false;
             _showSaveDlg = true;
         }
@@ -1237,12 +1239,14 @@ namespace BAMPServerBrowser
                 GUILayout.FlexibleSpace();
                 GUILayout.EndHorizontal();
                 string cmd = VpsInstallCommand(out bool hasHost, out bool portGiven, out int port);
-                GUILayout.Label("<size=11>1. Paste this command in a terminal on your PC (PowerShell), then type your VPS password when asked:</size>", _small);
+                GUILayout.Label("<size=11>1. Paste this command in a terminal on your PC (PowerShell). It sends the server files from this PC to your VPS, then installs them. Type your VPS password when asked (twice).</size>", _small);
                 GUILayout.BeginHorizontal();
                 GUILayout.Label("<size=10><color=#cfe3ff>" + Esc(cmd) + "</color></size>", _small);
                 GUI.enabled = hasHost;
                 if (GUILayout.Button(Time.unscaledTime - _ssCopiedAt < 2.5f ? "Copied!" : "Copy", GUILayout.Width(80), GUILayout.Height(30)))
                 {
+                    _vpsFilesDir = SaveServerPrompt.ExtractVpsFiles(); // fichiers à jour au moment de copier
+                    cmd = VpsInstallCommand(out _, out _, out _);
                     try { GUIUtility.systemCopyBuffer = cmd; _ssCopiedAt = Time.unscaledTime; } catch { }
                 }
                 GUI.enabled = true;
@@ -1250,7 +1254,8 @@ namespace BAMPServerBrowser
                 if (!hasHost) GUILayout.Label("<size=11>Type the address of your VPS above first (for example 203.0.113.5:8787).</size>", _bad);
                 else if (!portGiven) GUILayout.Label($"<size=11>No port in the address: the server is installed on port {port}. Use the address <b>{Esc(new Uri(BrowserConfig.NormalizeUrl(_ssUrl)).Host)}:{port}</b>.</size>", _small);
                 GUILayout.Label("<size=11>2. When it says the server is running, click <b>Test</b>.</size>", _small);
-                GUILayout.Label("<size=10>With an SSH key, add  -i C:\\path\\to\\key  after ssh. If this VPS already runs the game list on this port, the same service will also store the saves.</size>", _small);
+                if (_vpsFilesDir.Length == 0) GUILayout.Label("<size=11>The server files could not be prepared on this PC (see the game log).</size>", _bad);
+                GUILayout.Label("<size=10>With an SSH key, add  -i C:\\path\\to\\key  after scp and after ssh. If this VPS already runs the game list on this port, the same service will also store the saves.</size>", _small);
                 GUILayout.EndVertical();
             }
 

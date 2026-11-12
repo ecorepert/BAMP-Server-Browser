@@ -54,6 +54,34 @@ namespace BAMPServerBrowser
         }
 
         /// <summary>
+        /// Écrit master.py et install.sh (embarqués dans le mod) dans un dossier de ce PC, en fins de ligne Linux,
+        /// pour que la commande d'installation les envoie au VPS avec scp. Renvoie le dossier ("" en cas d'échec).
+        /// À appeler sur le thread principal (dossier de données du jeu).
+        /// </summary>
+        public static string ExtractVpsFiles()
+        {
+            try
+            {
+                string dir = Path.Combine(UnityEngine.Application.persistentDataPath, "BAMPServerBrowser", "vps-install");
+                Directory.CreateDirectory(dir);
+                var asm = typeof(SaveServerPrompt).Assembly;
+                foreach (var name in new[] { "master.py", "install.sh" })
+                {
+                    using (var st = asm.GetManifestResourceStream("vps/" + name))
+                    {
+                        if (st == null) { ModEntry.Warn("[SaveServer] embedded file missing: " + name); return ""; }
+                        string text;
+                        using (var sr = new StreamReader(st, System.Text.Encoding.UTF8)) text = sr.ReadToEnd();
+                        text = text.Replace("\r\n", "\n"); // le shell Linux refuse les fins de ligne Windows
+                        File.WriteAllBytes(Path.Combine(dir, name), new System.Text.UTF8Encoding(false).GetBytes(text));
+                    }
+                }
+                return Path.GetFullPath(dir);
+            }
+            catch (Exception ex) { ModEntry.Warn("[SaveServer] cannot prepare the VPS files: " + ex.Message); return ""; }
+        }
+
+        /// <summary>
         /// Vérifie qu'une adresse est un serveur de sauvegardes BAMP utilisable avec notre code de groupe.
         /// Renvoie (ok, message à afficher).
         /// </summary>

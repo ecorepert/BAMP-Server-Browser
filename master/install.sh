@@ -5,26 +5,16 @@
 # Usage (as root, in the folder that contains master.py and this script):
 #   sh install.sh            # port 8787
 #   sh install.sh 9000       # other port
-#   sh install.sh 8787 latest   # download the latest master.py from GitHub instead
 #
-# One line from your PC (what the game's "My own server" window copies):
-#   ssh -t root@YOUR_VPS "curl -fsSL https://github.com/ecorepert/BAMP-Server-Browser/raw/main/master/install.sh -o /tmp/bamp-install.sh && sudo sh /tmp/bamp-install.sh 8787 latest"
+# The game ("Host New Game" > "My own server" > Copy) gives a command that sends master.py and this
+# script from your PC to the VPS with scp, then runs it with ssh. Nothing is downloaded from the internet.
 set -e
 PORT="${1:-8787}"
-SOURCE="${2:-}"
 DIR=/opt/bamp-master
-MASTER_URL="https://github.com/ecorepert/BAMP-Server-Browser/raw/main/master/master.py"
 
 if [ "$(id -u)" != "0" ]; then echo "Run as root (sudo sh install.sh)"; exit 1; fi
 case "$PORT" in ''|*[!0-9]*) echo "Invalid port: $PORT"; exit 1;; esac
 command -v python3 >/dev/null 2>&1 || { echo "python3 missing: apt install -y python3"; exit 1; }
-if [ "$SOURCE" = "latest" ] || [ ! -f master.py ]; then
-  command -v curl >/dev/null 2>&1 || { echo "curl missing: apt install -y curl"; exit 1; }
-  WORK=$(mktemp -d)
-  echo "Downloading master.py from GitHub..."
-  curl -fsSL "$MASTER_URL" -o "$WORK/master.py" || { echo "Download failed: $MASTER_URL"; exit 1; }
-  cd "$WORK"
-fi
 [ -f master.py ] || { echo "master.py not found in the current folder"; exit 1; }
 python3 -c "import ast,sys; ast.parse(open('master.py').read())" || { echo "master.py is not valid Python"; exit 1; }
 if [ -f "$DIR/master.py" ]; then cp -p "$DIR/master.py" "$DIR/master.py.bak"; fi
