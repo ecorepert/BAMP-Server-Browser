@@ -248,4 +248,6 @@ IP, 5 listed games per IP, 500 games, 75 s heartbeat timeout, 64 MB per world, 2
 
 - *Going Public: Multiplayer for Big Ambitions* and its authors: this add-on depends on it entirely.
 - *Big Ambitions* by Hovgaard Games. Not affiliated with Hovgaard Games or the base mod's authors.
-- MIT License (see `LICENSE`).
+- **License: public domain ([The Unlicense](LICENSE)).** Free for any use, modification and exploitation, commercial
+  or not, without asking and without conditions. This covers the files of this repository only: Big Ambitions and
+  *Going Public* belong to their owners and are not included.
