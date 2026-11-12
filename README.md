@@ -106,7 +106,7 @@ paste it in PowerShell on your PC (Debian/Ubuntu or any systemd Linux with pytho
 runs the installer with `ssh`. Nothing is downloaded from the internet. It looks like:
 
 ```bash
-scp "%LOCALAPPDATA%Low\Hovgaard Games\Big Ambitions\BAMPServerBrowserps-install\master.py" "…\install.sh" root@YOUR_VPS:/tmp/ ; ssh -t root@YOUR_VPS "cd /tmp && sudo sh install.sh 8787"
+scp "C:\Users\YOU\AppData\LocalLow\Hovgaard Games\Big Ambitions\BAMPServerBrowser\vps-install\master.py" "C:\Users\YOU\AppData\LocalLow\Hovgaard Games\Big Ambitions\BAMPServerBrowser\vps-install\install.sh" root@YOUR_VPS:/tmp/ ; ssh -t root@YOUR_VPS "cd /tmp && sudo sh install.sh 8787"
 ```
 
 Or by hand, on the VPS, in a folder that contains `master.py` and `install.sh`:
