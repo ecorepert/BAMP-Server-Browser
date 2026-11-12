@@ -68,7 +68,7 @@ namespace BAMPServerBrowser
         public System.Collections.Generic.List<string> saveServerHistory = new System.Collections.Generic.List<string>();
         /// <summary>Utilisateur SSH proposé dans la commande d'installation sur VPS.</summary>
         public string sshUser = "root";
-        /// <summary>Vérifier sur GitHub si une nouvelle version du mod existe.</summary>
+        /// <summary>Demander au serveur de liste (masterUrl) si une nouvelle version du mod existe.</summary>
         public bool checkUpdates = true;
         /// <summary>Langue parlée sur la partie hébergée (code court, ex. "FR"). Vide = déduite de la langue du système.</summary>
         public string language = "";

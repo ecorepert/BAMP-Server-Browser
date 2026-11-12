@@ -22,6 +22,10 @@ if [ -f "$DIR/master.py" ]; then cp -p "$DIR/master.py" "$DIR/master.py.bak"; fi
 mkdir -p "$DIR"
 cp master.py "$DIR/master.py"
 chmod 644 "$DIR/master.py"
+# publication du mod pour les joueurs (facultatif) : version.json + BAMPServerBrowser.dll
+for f in version.json BAMPServerBrowser.dll; do
+  if [ -f "$f" ]; then cp "$f" "$DIR/$f"; chmod 644 "$DIR/$f"; echo "Published $f"; fi
+done
 
 cat > /etc/systemd/system/bamp-master.service <<EOF
 [Unit]

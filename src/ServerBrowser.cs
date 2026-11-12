@@ -103,7 +103,10 @@ namespace BAMPServerBrowser
             if (UpdateCheck.NewVersion.Length > 0 && !_updateToasted && Bridge.InMainMenu)
             {
                 _updateToasted = true;
-                Toast($"New version {UpdateCheck.NewVersion} of BAMP Server Browser is available (you have {BuildInfo.Short}).", "Download page", () => Application.OpenURL(UpdateCheck.RepoUrl));
+                if (UpdateCheck.DownloadUrl.Length > 0)
+                    Toast($"New version {UpdateCheck.NewVersion} of BAMP Server Browser is available (you have {BuildInfo.Short}).", "Download", () => Application.OpenURL(UpdateCheck.DownloadUrl));
+                else
+                    Toast($"New version {UpdateCheck.NewVersion} of BAMP Server Browser is available (you have {BuildInfo.Short}). Ask the server admin for the file.");
             }
             if (Cfg.notifyFavorites && Cfg.favorites.Count > 0 && !_fetching && !_favPolling && Time.unscaledTime >= _nextFavPoll)
             {
@@ -612,8 +615,9 @@ namespace BAMPServerBrowser
             {
                 GUILayout.BeginHorizontal(_box);
                 GUILayout.Label($"<color=#ffd24a>New version {UpdateCheck.NewVersion} available</color> (you have {BuildInfo.Short})." + (UpdateCheck.Notes.Length > 0 ? " " + Esc(UpdateCheck.Notes) : ""), _small);
-                if (GUILayout.Button("Download page", GUILayout.Width(130))) Application.OpenURL(UpdateCheck.RepoUrl);
+                if (UpdateCheck.DownloadUrl.Length > 0 && GUILayout.Button("Download", GUILayout.Width(110))) Application.OpenURL(UpdateCheck.DownloadUrl);
                 GUILayout.EndHorizontal();
+                GUILayout.Label(@"<size=10>Game closed, put the downloaded BAMPServerBrowser.dll in  LocalLow\Hovgaard Games\Big Ambitions\ModsLocal\BAMPServerBrowser  (replace the old one).</size>", _small);
             }
             if ((AdminChannel.KickedNotice ?? "").Length > 0)
             {

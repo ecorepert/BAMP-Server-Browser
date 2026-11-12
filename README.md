@@ -16,7 +16,7 @@ methods in memory (Harmony, provided by the base mod) for the join password.
 |---|---|
 | **Server list** | Every hosted game can be published to a public list. Players pick a game and click *Join* — no IP to type. Joins through the **Steam relay** by default (no port forwarding), or by IP:port. Games seen in the last 7 days stay listed when offline (green dot = online, grey = offline). Filter by language, *Online only*, *Favorites only*, *Hide games with a password*, search by name, and sort by status, name, day, players or language. Selecting a game shows its **difficulty settings**, the **names of the connected players** and the **ping**. |
 | **Favorites** | *Add to favorites* on any game; favorites are listed first and you get a notification when one comes online. |
-| **Update check** | Once per launch the mod checks `version.json` on GitHub and shows a banner when a newer version exists. |
+| **Update check** | Once per launch the mod asks the game list server (`/api/version`) whether a newer version is published, shows a banner and a *Download* button (`/download/BAMPServerBrowser.dll` on that same server). Nothing comes from GitHub. |
 | **Publish panel** | While hosting: show/hide the game in the list, name, description, language, max players, player password, admin password. The entry shows the language tag (e.g. **[FR]**), *Lobby* / *In game*, the in-game day, player count and mod version. |
 | **Player & admin passwords** | Both empty by default (anyone can join, no admin). With a **player password** the game is marked **[password]**, the password is asked right after clicking *Join*, and the host refuses anyone without it; players who give it automatically receive the host's shared saves. Whoever joins with the **admin password** gets a *Manage this game* window: change name, description, language, max players, passwords, public listing, and delete shared saves (the host executes; the group admin key never leaves the host's PC). |
 | **Shared world saves** | The latest version of each multiplayer world is kept on the group's save server, so any member can host the up-to-date world. Default: the host's own PC. Option: your own private VPS. |
@@ -161,7 +161,7 @@ If your hosting provider has its own firewall, open the port there as well. Chec
 | `favorites` | `[]` | Favorite games (`steam:<id>` or `ip:<address>:<port>`) |
 | `notifyFavorites` | `true` | Notification when a favorite comes online |
 | `listHidePassword` | `false` | Hide games with a password in the list |
-| `checkUpdates` | `true` | Check GitHub for a newer version at launch |
+| `checkUpdates` | `true` | Ask the game list server for a newer version at launch |
 | `askSaveServerOnNewGame` | `true` | Ask where to store the shared saves on *Host New Game* |
 | `saveServerHistory` | `[]` | Save servers used before (pre-filled in that question) |
 | `sshUser` | `root` | SSH user used in the VPS install command |
@@ -228,6 +228,8 @@ not redistributed.
 |---|---|---|
 | GET | `/api/servers` | Public game list (online games only) |
 | POST | `/api/worlds/<id>/restore` | (admin key) Take a world out of the trash |
+| GET | `/api/version` | Published mod version (`version.json` next to `master.py`) |
+| GET | `/download/BAMPServerBrowser.dll` | Published mod file (next to `master.py`) |
 | GET | `/api/servers?offline=1` | Same, plus games seen in the last 7 days that are offline (`online: false`, `offlineFor` in seconds, no IP). A world relaunched by another host (same `worldId`) is listed once. |
 | POST | `/api/servers` | Register a game → `{id, token}` (IP taken from the connection) |
 | POST / DELETE | `/api/servers/<id>` | Heartbeat / remove (`X-Token`) |
@@ -245,3 +247,9 @@ not redistributed.
 - *Going Public: Multiplayer for Big Ambitions* and its authors — this add-on depends on it entirely.
 - *Big Ambitions* by Hovgaard Games.
 - Not affiliated with Hovgaard Games or the multiplayer mod authors.
+
+### Publishing an update for the players
+
+Put `master/version.json` (with the new version number) and `dist/BAMPServerBrowser.dll` next to `master.py` on
+the game list server (`/opt/bamp-master/`), then restart it. Every player's mod sees the new version at its next
+launch and gets a *Download* button. (`install.sh` also copies these two files when they are in its folder.)

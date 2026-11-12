@@ -96,41 +96,51 @@ namespace BAMPServerBrowser
         }
     }
 
-    /// <summary>Vérifie une fois par lancement si une version plus récente du mod est publiée sur GitHub.</summary>
+    /// <summary>
+    /// Vérifie une fois par lancement, auprès du serveur de liste (masterUrl), si une version plus récente du mod
+    /// est publiée (/api/version), et donne l'adresse de téléchargement sur ce même serveur.
+    /// </summary>
     public static class UpdateCheck
     {
-        public const string RepoUrl = "https://github.com/ecorepert/BAMP-Server-Browser";
-        private const string VersionUrl = "https://github.com/ecorepert/BAMP-Server-Browser/raw/main/version.json";
         public static volatile string NewVersion = "";
         public static volatile string Notes = "";
+        /// <summary>Adresse de téléchargement du mod sur le serveur de liste ("" si non publiée).</summary>
+        public static volatile string DownloadUrl = "";
         private static bool _started;
 
         public static void Start()
         {
             if (_started || !BrowserConfig.Current.checkUpdates) return;
             _started = true;
+            string baseUrl = BrowserConfig.NormalizeUrl(BrowserConfig.Current.masterUrl);
+            if (baseUrl.Length == 0) return;
             Task.Run(() =>
             {
                 try
                 {
                     try { ServicePointManager.SecurityProtocol |= SecurityProtocolType.Tls12; } catch { }
-                    var r = (HttpWebRequest)WebRequest.Create(VersionUrl);
-                    r.Timeout = 8000; r.ReadWriteTimeout = 8000; r.UserAgent = BuildInfo.UserAgent;
+                    var r = (HttpWebRequest)WebRequest.Create(baseUrl + "/api/version");
+                    r.Timeout = 8000; r.ReadWriteTimeout = 8000; r.UserAgent = BuildInfo.UserAgent; r.AllowAutoRedirect = false;
                     using (var resp = (HttpWebResponse)r.GetResponse())
                     using (var sr = new System.IO.StreamReader(resp.GetResponseStream()))
                     {
-                        string body = sr.ReadToEnd();
-                        if (body.Length > 4096) return;
-                        var o = JObject.Parse(body);
+                        char[] buf = new char[4097];
+                        int n = sr.ReadBlock(buf, 0, buf.Length);
+                        if (n > 4096) return;
+                        var o = JObject.Parse(new string(buf, 0, n));
                         if (Version.TryParse((string)o["version"] ?? "", out var v) && v > BuildInfo.Version)
                         {
-                            Notes = ((string)o["notes"] ?? "").Length > 200 ? ((string)o["notes"]).Substring(0, 200) : ((string)o["notes"] ?? "");
+                            string notes = (string)o["notes"] ?? "";
+                            Notes = notes.Length > 200 ? notes.Substring(0, 200) : notes;
+                            // seul un chemin du serveur de liste est accepté (pas d'adresse vers un autre site)
+                            string dl = (string)o["download"] ?? "";
+                            DownloadUrl = dl.StartsWith("/download/", StringComparison.Ordinal) && !dl.Contains("..") && !dl.Contains("//") ? baseUrl + dl : "";
                             NewVersion = v.ToString(3);
                             ModEntry.Info($"new version available: {NewVersion} (you have {BuildInfo.Short}).");
                         }
                     }
                 }
-                catch { /* pas d'internet ou GitHub injoignable : on n'insiste pas */ }
+                catch { /* serveur injoignable ou aucune version publiée : on n'insiste pas */ }
             });
         }
     }

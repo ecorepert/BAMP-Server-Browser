@@ -9,6 +9,8 @@ Stdlib only. Stockage en memoire, les entrees expirent sans heartbeat.
   POST   /api/servers/<id>          -> heartbeat / mise a jour (header X-Token)
   DELETE /api/servers/<id>          -> retire la partie (header X-Token)
   GET    /health                    -> "ok"
+  GET    /api/version               -> {"version", "notes", "download"} lus dans version.json (a cote de master.py)
+  GET    /download/BAMPServerBrowser.dll -> le mod a jour, s'il est depose a cote de master.py
 
 Mondes partages (header X-Share-Key = code de groupe, >= 6 caracteres) :
   GET    /api/worlds                -> {"worlds": [...]} du groupe
@@ -32,6 +34,11 @@ import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 HOST = os.environ.get("BAMP_MASTER_HOST", "0.0.0.0")
+# Dossier de publication du mod : version.json + BAMPServerBrowser.dll (par defaut, celui de master.py)
+DIST_DIR = os.environ.get("BAMP_DIST_DIR") or os.path.dirname(os.path.abspath(__file__))
+DLL_NAME = "BAMPServerBrowser.dll"
+MAX_DLL_BYTES = 10 * 1024 * 1024
+_VERSION_RE = re.compile(r"^\d{1,4}(\.\d{1,5}){1,3}$")
 PORT = int(os.environ.get("BAMP_MASTER_PORT", "8787"))
 TTL = 75            # secondes sans heartbeat avant expiration
 MAX_TOTAL = 500
@@ -133,6 +140,23 @@ def _clean_int(v, lo, hi, default=0):
     except (TypeError, ValueError):
         return default
     return max(lo, min(hi, v))
+
+
+def _version_info():
+    """Version publiee du mod (version.json a cote de master.py), ou None si rien n'est publie."""
+    try:
+        with open(os.path.join(DIST_DIR, "version.json"), "r", encoding="utf-8-sig") as fh:
+            data = json.load(fh)
+    except (OSError, ValueError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    v = str(data.get("version", "")).strip()
+    if not _VERSION_RE.match(v):
+        return None
+    dll = os.path.join(DIST_DIR, DLL_NAME)
+    has_dll = os.path.isfile(dll) and 0 < os.path.getsize(dll) <= MAX_DLL_BYTES
+    return {"version": v, "notes": _clean_str(data.get("notes"), 200), "download": ("/download/" + DLL_NAME) if has_dll else ""}
 
 
 def _clean_names(v):
@@ -311,6 +335,20 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(data)
 
+    def _send_file(self, path, name):
+        with open(path, "rb") as fh:
+            data = fh.read(MAX_DLL_BYTES + 1)
+        if len(data) > MAX_DLL_BYTES:
+            return self._send(404, {"error": "not found"})
+        self.send_response(200)
+        self.send_header("Content-Type", "application/octet-stream")
+        self.send_header("Content-Disposition", 'attachment; filename="%s"' % name)
+        self.send_header("Content-Length", str(len(data)))
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(data)
+
     def _body(self):
         n = int(self.headers.get("Content-Length") or 0)
         if n <= 0 or n > MAX_BODY:
@@ -340,6 +378,14 @@ class Handler(BaseHTTPRequestHandler):
         path = self.path.split("?")[0].rstrip("/")
         if path == "/health":
             return self._send(200, {"ok": True})
+        if path == "/api/version":
+            info = _version_info()
+            return self._send(200, info) if info else self._send(404, {"error": "no version published"})
+        if path == "/download/" + DLL_NAME:
+            dll = os.path.join(DIST_DIR, DLL_NAME)
+            if not os.path.isfile(dll):
+                return self._send(404, {"error": "not found"})
+            return self._send_file(dll, DLL_NAME)
         wid = self._world_route()
         if wid is False:
             return

@@ -1,4 +1,0 @@
-{
-  "version": "1.3.4",
-  "notes": "VPS install: the server files are sent from your PC (scp), nothing is downloaded from GitHub."
-}
